@@ -1,7 +1,15 @@
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions } from "react-native";
+﻿import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Dimensions,
+  Animated,
+} from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
+import { useEffect, useRef } from "react";
 import type { Mode } from "@/constants/modes";
 import { Colors, Typography, Spacing, Radii } from "@/constants/theme";
 
@@ -10,50 +18,132 @@ const CARD_WIDTH = (width - Spacing.screen * 2 - Spacing.sm) / 2;
 
 interface ModeCardProps {
   mode: Mode;
+  isRecent?: boolean;
+  enterDelay?: number;
+  onQuickPlay?: (modeId: string) => void;
 }
 
-export default function ModeCard({ mode }: ModeCardProps) {
+export default function ModeCard({
+  mode,
+  isRecent = false,
+  enterDelay = 0,
+  onQuickPlay,
+}: ModeCardProps) {
   const router = useRouter();
 
+  // Entrance
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(16)).current;
+
+  // Press depth
+  const scale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 380,
+        delay: enterDelay,
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 380,
+        delay: enterDelay,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
+  const handlePressIn = () =>
+    Animated.timing(scale, { toValue: 0.97, duration: 80, useNativeDriver: true }).start();
+
+  const handlePressOut = () =>
+    Animated.timing(scale, { toValue: 1, duration: 140, useNativeDriver: true }).start();
+
+  const handlePress = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    router.push(`/mode/${mode.id}`);
+  };
+
+  const handleLongPress = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    onQuickPlay?.(mode.id);
+    router.push({ pathname: `/mode/${mode.id}`, params: { autoPlay: "1" } });
+  };
+
   return (
-    <TouchableOpacity
-      style={styles.wrapper}
-      onPress={() => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        router.push(`/mode/${mode.id}`);
-      }}
-      activeOpacity={0.82}
+    <Animated.View
+      style={[
+        styles.wrapper,
+        { opacity, transform: [{ translateY }, { scale }] },
+      ]}
     >
-      <LinearGradient
-        colors={[`${mode.colors.base}EE`, `${mode.colors.base}88`, Colors.surface]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.card}
+      <TouchableOpacity
+        onPress={handlePress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        onLongPress={handleLongPress}
+        delayLongPress={420}
+        activeOpacity={1}
+        style={styles.touchable}
       >
-        {/* Glow blob */}
-        <View
-          style={[styles.glow, { backgroundColor: mode.colors.glow }]}
-          pointerEvents="none"
-        />
+        <LinearGradient
+          colors={[`${mode.colors.base}EE`, `${mode.colors.base}88`, Colors.surface]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.card}
+        >
+          {/* Glow blob */}
+          <View
+            style={[styles.glow, { backgroundColor: mode.colors.glow }]}
+            pointerEvents="none"
+          />
 
-        {/* Icon */}
-        <Text style={[styles.icon, { color: mode.colors.accent }]}>{mode.icon}</Text>
+          {/* Recently used badge */}
+          {isRecent && (
+            <View
+              style={[
+                styles.badge,
+                {
+                  backgroundColor: `${mode.colors.accent}1A`,
+                  borderColor: `${mode.colors.accent}44`,
+                },
+              ]}
+            >
+              <Text style={[styles.badgeText, { color: mode.colors.accent }]}>
+                Recent
+              </Text>
+            </View>
+          )}
 
-        {/* Label */}
-        <View style={styles.labelArea}>
-          <Text style={styles.label}>{mode.label}</Text>
-          <Text style={[styles.tagline, { color: mode.colors.textAccent }]}>
-            {mode.tagline}
-          </Text>
-        </View>
-      </LinearGradient>
-    </TouchableOpacity>
+          {/* Icon */}
+          <Text style={[styles.icon, { color: mode.colors.accent }]}>{mode.icon}</Text>
+
+          {/* Label */}
+          <View style={styles.labelArea}>
+            <Text style={styles.label}>{mode.label}</Text>
+            <Text style={[styles.tagline, { color: mode.colors.textAccent }]}>
+              {mode.tagline}
+            </Text>
+          </View>
+        </LinearGradient>
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   wrapper: {
     width: CARD_WIDTH,
+    borderRadius: Radii.lg,
+    shadowColor: "#000",
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 7,
+  },
+  touchable: {
     borderRadius: Radii.lg,
     overflow: "hidden",
   },
@@ -73,6 +163,20 @@ const styles = StyleSheet.create({
     height: 120,
     borderRadius: 60,
     opacity: 0.6,
+  },
+  badge: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    borderRadius: 20,
+    borderWidth: 0.5,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  badgeText: {
+    fontFamily: Typography.sans,
+    fontSize: 10,
+    letterSpacing: 0.4,
   },
   icon: {
     fontSize: 26,

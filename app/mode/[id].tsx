@@ -3,15 +3,16 @@ import {
   Text,
   ScrollView,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
   ActivityIndicator,
   Dimensions,
-  Pressable,
+  Animated,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LinearGradient } from "expo-linear-gradient";
+import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
 import { getModeById } from "@/constants/modes";
 import { useAuthStore } from "@/lib/store/authStore";
@@ -22,7 +23,7 @@ import { Colors, Typography, Spacing, Radii } from "@/constants/theme";
 const { width } = Dimensions.get("window");
 
 export default function ModeScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, autoPlay } = useLocalSearchParams<{ id: string; autoPlay?: string }>();
   const router = useRouter();
   const { serverUrl, token, userId } = useAuthStore();
   const mode = getModeById(id);
@@ -31,11 +32,28 @@ export default function ModeScreen() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
 
+  // Entrance animations
+  const headerAnim = useRef(new Animated.Value(0)).current;
+  const listAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.timing(headerAnim, { toValue: 1, duration: 400, useNativeDriver: true }),
+      Animated.timing(listAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
+    ]).start();
+  }, []);
+
   useEffect(() => {
     if (!mode || !serverUrl || !token || !userId) return;
     setLoading(true);
     getSuggestionsForMode(serverUrl, token, userId, mode, 5)
-      .then(setSuggestions)
+      .then((items) => {
+        setSuggestions(items);
+        // Long-press quick play: jump straight to first item
+        if (autoPlay === "1" && items.length > 0) {
+          router.replace(`/player/${items[0].Id}`);
+        }
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [mode?.id]);
@@ -49,6 +67,7 @@ export default function ModeScreen() {
   }
 
   const handlePlay = (itemId: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     router.push(`/player/${itemId}`);
   };
 
@@ -78,17 +97,29 @@ export default function ModeScreen() {
           showsVerticalScrollIndicator={false}
         >
           {/* Mode identity */}
-          <View style={styles.identity}>
+          <Animated.View
+            style={[
+              styles.identity,
+              {
+                opacity: headerAnim,
+                transform: [{
+                  translateY: headerAnim.interpolate({
+                    inputRange: [0, 1], outputRange: [16, 0],
+                  }),
+                }],
+              },
+            ]}
+          >
             <Text style={[styles.modeIcon, { color: mode.colors.accent }]}>{mode.icon}</Text>
             <Text style={styles.modeLabel}>{mode.label}</Text>
             <Text style={[styles.modeTagline, { color: mode.colors.textAccent }]}>
               {mode.tagline}
             </Text>
             <Text style={styles.modeDescription}>{mode.description}</Text>
-          </View>
+          </Animated.View>
 
           {/* Suggestions */}
-          <View style={styles.suggestionsSection}>
+          <Animated.View style={[styles.suggestionsSection, { opacity: listAnim }]}>
             <Text style={styles.sectionLabel}>Curated for this moment</Text>
 
             {loading ? (
@@ -107,67 +138,20 @@ export default function ModeScreen() {
                       : undefined;
 
                   return (
-                    <Pressable
+                    <SuggestionCard
                       key={item.Id}
-                      onPress={() => setSelected(isSelected ? null : item.Id)}
-                      style={[styles.suggestion, isSelected && { borderColor: `${mode.colors.accent}88` }]}
-                    >
-                      {/* Backdrop thumbnail */}
-                      <View style={styles.thumb}>
-                        {imageUrl ? (
-                          <Image
-                            source={{ uri: imageUrl }}
-                            style={StyleSheet.absoluteFill}
-                            contentFit="cover"
-                            transition={200}
-                          />
-                        ) : (
-                          <View style={[StyleSheet.absoluteFill, styles.noThumb]} />
-                        )}
-                        <LinearGradient
-                          colors={["transparent", "rgba(10,10,12,0.7)"]}
-                          style={StyleSheet.absoluteFill}
-                          pointerEvents="none"
-                        />
-                      </View>
-
-                      {/* Info */}
-                      <View style={styles.suggestionInfo}>
-                        <View style={styles.suggestionInfoTop}>
-                          <Text style={styles.suggestionTitle} numberOfLines={2}>{item.Name}</Text>
-                          <View style={styles.suggestionMeta}>
-                            {item.ProductionYear && (
-                              <Text style={styles.metaText}>{item.ProductionYear}</Text>
-                            )}
-                            {item.RunTimeTicks && (
-                              <Text style={styles.metaText}>{formatRuntime(item.RunTimeTicks)}</Text>
-                            )}
-                            {item.CommunityRating && (
-                              <Text style={styles.metaText}>★ {item.CommunityRating.toFixed(1)}</Text>
-                            )}
-                          </View>
-                          {item.Overview && (
-                            <Text style={styles.overview} numberOfLines={isSelected ? 6 : 2}>
-                              {item.Overview}
-                            </Text>
-                          )}
-                        </View>
-
-                        {/* Play button — visible when selected or always */}
-                        <TouchableOpacity
-                          style={[styles.playBtn, { backgroundColor: mode.colors.accent }]}
-                          onPress={() => handlePlay(item.Id)}
-                          activeOpacity={0.85}
-                        >
-                          <Text style={styles.playBtnText}>▶  Play</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </Pressable>
+                      item={item}
+                      imageUrl={imageUrl}
+                      isSelected={isSelected}
+                      accentColor={mode.colors.accent}
+                      onToggle={() => setSelected(isSelected ? null : item.Id)}
+                      onPlay={() => handlePlay(item.Id)}
+                    />
                   );
                 })}
               </View>
             )}
-          </View>
+          </Animated.View>
 
           {/* Library shortcut */}
           <TouchableOpacity
@@ -296,3 +280,100 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 });
+
+// ─── Suggestion card with press animation ────────────────────────────────────
+interface SuggestionCardProps {
+  item: JellyfinItem;
+  imageUrl: string | undefined;
+  isSelected: boolean;
+  accentColor: string;
+  onToggle: () => void;
+  onPlay: () => void;
+}
+
+function SuggestionCard({
+  item,
+  imageUrl,
+  isSelected,
+  accentColor,
+  onToggle,
+  onPlay,
+}: SuggestionCardProps) {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  const pressIn = () =>
+    Animated.timing(scale, { toValue: 0.985, duration: 80, useNativeDriver: true }).start();
+  const pressOut = () =>
+    Animated.timing(scale, { toValue: 1, duration: 130, useNativeDriver: true }).start();
+
+  return (
+    <Animated.View
+      style={[
+        styles.suggestion,
+        { transform: [{ scale }] },
+        isSelected && { borderColor: `${accentColor}88` },
+      ]}
+    >
+      <TouchableOpacity
+        onPress={onToggle}
+        onPressIn={pressIn}
+        onPressOut={pressOut}
+        activeOpacity={1}
+      >
+        {/* Backdrop thumbnail */}
+        <View style={styles.thumb}>
+          {imageUrl ? (
+            <Image
+              source={{ uri: imageUrl }}
+              style={StyleSheet.absoluteFill}
+              contentFit="cover"
+              transition={200}
+            />
+          ) : (
+            <View style={[StyleSheet.absoluteFill, styles.noThumb]} />
+          )}
+          <LinearGradient
+            colors={["transparent", "rgba(10,10,12,0.72)"]}
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+          />
+        </View>
+
+        {/* Info */}
+        <View style={styles.suggestionInfo}>
+          <View style={styles.suggestionInfoTop}>
+            <Text style={styles.suggestionTitle} numberOfLines={2}>{item.Name}</Text>
+            <View style={styles.suggestionMeta}>
+              {item.ProductionYear && (
+                <Text style={styles.metaText}>{item.ProductionYear}</Text>
+              )}
+              {item.RunTimeTicks && (
+                <Text style={styles.metaText}>{formatRuntime(item.RunTimeTicks)}</Text>
+              )}
+              {item.CommunityRating && (
+                <Text style={styles.metaText}>★ {item.CommunityRating.toFixed(1)}</Text>
+              )}
+            </View>
+            {item.Overview && (
+              <Text style={styles.overview} numberOfLines={isSelected ? 6 : 2}>
+                {item.Overview}
+              </Text>
+            )}
+          </View>
+
+          {/* Gradient play button */}
+          <TouchableOpacity onPress={onPlay} activeOpacity={0.88}>
+            <LinearGradient
+              colors={[accentColor, `${accentColor}BB`]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.playBtn}
+            >
+              <Text style={styles.playBtnText}>▶ Play</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}

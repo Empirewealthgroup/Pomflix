@@ -1,5 +1,4 @@
-"use client";
-import {
+﻿import {
   View,
   Text,
   TextInput,
@@ -10,35 +9,112 @@ import {
   ActivityIndicator,
   Alert,
   ScrollView,
+  Animated,
 } from "react-native";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuthStore } from "@/lib/store/authStore";
 import { authenticateUser } from "@/lib/jellyfin/auth";
-import { Colors, Typography, Spacing, Radii } from "@/constants/theme";
+import { SERVER_URL } from "@/constants/config";
 
 export default function LoginScreen() {
   const { setAuth } = useAuthStore();
-  const [serverUrl, setServerUrl] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Load animations
+  const logoOpacity = useRef(new Animated.Value(0)).current;
+  const dotOpacity = useRef(new Animated.Value(0)).current;
+  const formTranslate = useRef(new Animated.Value(24)).current;
+  const formOpacity = useRef(new Animated.Value(0)).current;
+
+  // Dot pulse
+  const dotPulse = useRef(new Animated.Value(1)).current;
+
+  // Button press
+  const buttonScale = useRef(new Animated.Value(1)).current;
+  const buttonOpacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    // Entrance sequence
+    Animated.sequence([
+      Animated.timing(logoOpacity, {
+        toValue: 1,
+        duration: 600,
+        useNativeDriver: true,
+      }),
+      Animated.timing(dotOpacity, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    Animated.parallel([
+      Animated.timing(formTranslate, {
+        toValue: 0,
+        duration: 500,
+        delay: 300,
+        useNativeDriver: true,
+      }),
+      Animated.timing(formOpacity, {
+        toValue: 1,
+        duration: 500,
+        delay: 300,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    // Dot pulse loop â€” starts after dot fades in
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(dotPulse, {
+          toValue: 1.5,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(dotPulse, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    const t = setTimeout(() => pulse.start(), 500);
+    return () => {
+      clearTimeout(t);
+      pulse.stop();
+    };
+  }, []);
+
+  const handlePressIn = () => {
+    Animated.parallel([
+      Animated.timing(buttonScale, { toValue: 0.97, duration: 80, useNativeDriver: true }),
+      Animated.timing(buttonOpacity, { toValue: 0.9, duration: 80, useNativeDriver: true }),
+    ]).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.parallel([
+      Animated.timing(buttonScale, { toValue: 1, duration: 120, useNativeDriver: true }),
+      Animated.timing(buttonOpacity, { toValue: 1, duration: 120, useNativeDriver: true }),
+    ]).start();
+  };
+
   const handleLogin = async () => {
-    if (!serverUrl.trim() || !username.trim()) {
-      Alert.alert("Missing Info", "Please enter your server URL and username.");
+    if (!username.trim()) {
+      Alert.alert("Missing Info", "Please enter your username.");
       return;
     }
-
     setLoading(true);
     try {
-      const cleanUrl = serverUrl.trim().replace(/\/$/, "");
-      const res = await authenticateUser(cleanUrl, username.trim(), password);
+      const res = await authenticateUser(SERVER_URL, username.trim(), password);
       await setAuth({
         token: res.AccessToken,
         userId: res.User.Id,
         userName: res.User.Name,
-        serverUrl: cleanUrl,
+        serverUrl: SERVER_URL,
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Login failed.";
@@ -49,10 +125,16 @@ export default function LoginScreen() {
   };
 
   return (
-    <LinearGradient
-      colors={["#0A0A0C", "#111114", "#0A0A0C"]}
-      style={styles.gradient}
-    >
+    <View style={styles.root}>
+      {/* Dark gradient background */}
+      <LinearGradient
+        colors={["#0A0A0C", "#050507"]}
+        style={StyleSheet.absoluteFill}
+      />
+
+      {/* Radial pomegranate glow â€” top center */}
+      <View style={styles.radialGlow} pointerEvents="none" />
+
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.flex}
@@ -62,36 +144,33 @@ export default function LoginScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Logo mark */}
-          <View style={styles.logoArea}>
-            <View style={styles.pomDot} />
+          {/* â”€â”€ Branding â”€â”€ */}
+          <Animated.View style={[styles.logoArea, { opacity: logoOpacity }]}>
+            {/* Pulsing accent dot */}
+            <Animated.View style={[styles.dotWrapper, { opacity: dotOpacity }]}>
+              <Animated.View
+                style={[styles.dotGlow, { transform: [{ scale: dotPulse }] }]}
+              />
+              <View style={styles.dot} />
+            </Animated.View>
+
             <Text style={styles.wordmark}>Pomflix</Text>
             <Text style={styles.tagline}>Press play on a state, not a show.</Text>
-          </View>
+          </Animated.View>
 
-          {/* Form */}
-          <View style={styles.form}>
+          {/* â”€â”€ Form â”€â”€ */}
+          <Animated.View
+            style={[
+              styles.form,
+              { opacity: formOpacity, transform: [{ translateY: formTranslate }] },
+            ]}
+          >
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Server URL</Text>
+              <Text style={styles.label}>USERNAME</Text>
               <TextInput
                 style={styles.input}
-                placeholder="https://your.server.com"
-                placeholderTextColor={Colors.textMuted}
-                value={serverUrl}
-                onChangeText={setServerUrl}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="url"
-                keyboardAppearance="dark"
-              />
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Username</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Your Jellyfin username"
-                placeholderTextColor={Colors.textMuted}
+                placeholder="Enter your username"
+                placeholderTextColor="#6F6C66"
                 value={username}
                 onChangeText={setUsername}
                 autoCapitalize="none"
@@ -101,11 +180,11 @@ export default function LoginScreen() {
             </View>
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Password</Text>
+              <Text style={styles.label}>PASSWORD</Text>
               <TextInput
                 style={styles.input}
-                placeholder="••••••••"
-                placeholderTextColor={Colors.textMuted}
+                placeholder="Enter your password"
+                placeholderTextColor="#6F6C66"
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry
@@ -113,105 +192,174 @@ export default function LoginScreen() {
               />
             </View>
 
-            <TouchableOpacity
-              style={[styles.button, loading && styles.buttonDisabled]}
-              onPress={handleLogin}
-              disabled={loading}
-              activeOpacity={0.85}
+            {/* Sign In */}
+            <Animated.View
+              style={[
+                styles.buttonShadow,
+                { transform: [{ scale: buttonScale }], opacity: buttonOpacity },
+              ]}
             >
-              {loading ? (
-                <ActivityIndicator color={Colors.textPrimary} />
-              ) : (
-                <Text style={styles.buttonText}>Sign In</Text>
-              )}
-            </TouchableOpacity>
-          </View>
+              <TouchableOpacity
+                onPress={handleLogin}
+                onPressIn={handlePressIn}
+                onPressOut={handlePressOut}
+                disabled={loading}
+                activeOpacity={1}
+              >
+                <LinearGradient
+                  colors={["#8B1A2E", "#A32035"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.button}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.buttonText}>Sign In</Text>
+                  )}
+                </LinearGradient>
+              </TouchableOpacity>
+            </Animated.View>
+          </Animated.View>
 
-          <Text style={styles.footnote}>
-            Pomflix connects to your private Jellyfin media server.
-            {"\n"}Your credentials are stored securely on this device.
-          </Text>
+          {/* â”€â”€ Footer â”€â”€ */}
+          <Animated.Text style={[styles.footnote, { opacity: formOpacity }]}>
+            Pomflix connects to your private Jellyfin media server.{"\n"}Your
+            credentials are stored securely on this device.
+          </Animated.Text>
         </ScrollView>
       </KeyboardAvoidingView>
-    </LinearGradient>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  gradient: { flex: 1 },
+  root: {
+    flex: 1,
+    backgroundColor: "#0A0A0C",
+  },
   flex: { flex: 1 },
+
+  radialGlow: {
+    position: "absolute",
+    top: -180,
+    alignSelf: "center",
+    width: 400,
+    height: 400,
+    borderRadius: 200,
+    backgroundColor: "#8B1A2E",
+    opacity: 0.09,
+  },
+
   container: {
     flexGrow: 1,
     justifyContent: "center",
-    paddingHorizontal: Spacing.screen,
-    paddingVertical: Spacing.xxl,
-    gap: Spacing.xxl,
+    paddingHorizontal: 24,
+    paddingTop: 32,
+    paddingBottom: 88,
+    gap: 40,
   },
 
+  // Branding
   logoArea: {
     alignItems: "center",
-    gap: Spacing.sm,
   },
-  pomDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: Colors.brand,
-    marginBottom: Spacing.xs,
+  dotWrapper: {
+    width: 32,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  dotGlow: {
+    position: "absolute",
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "#8B1A2E",
+    opacity: 0.6,
+  },
+  dot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#8B1A2E",
   },
   wordmark: {
-    fontFamily: Typography.display,
-    fontSize: 36,
-    color: Colors.textPrimary,
+    fontFamily: "PlayfairDisplay_500Medium",
+    fontSize: 42,
     letterSpacing: -0.5,
+    color: "#F2EDE8",
   },
   tagline: {
-    fontFamily: Typography.sans,
-    fontSize: 14,
-    color: Colors.textSecondary,
+    fontFamily: "Inter_400Regular",
+    fontSize: 16,
+    color: "#8A8780",
+    opacity: 0.9,
     textAlign: "center",
+    marginTop: 8,
   },
 
-  form: { gap: Spacing.md },
-  fieldGroup: { gap: Spacing.xs },
+  // Form
+  form: {
+    gap: 18,
+  },
+  fieldGroup: {
+    gap: 0,
+  },
   label: {
-    fontFamily: Typography.sansMedium,
+    fontFamily: "Inter_400Regular",
     fontSize: 12,
-    color: Colors.textSecondary,
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
+    color: "#8A8780",
+    letterSpacing: 1,
+    marginBottom: 6,
   },
   input: {
-    backgroundColor: Colors.surfaceRaised,
-    borderRadius: Radii.md,
+    backgroundColor: "#1C1C21",
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: Colors.surfaceBorder,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 14,
-    color: Colors.textPrimary,
-    fontFamily: Typography.sans,
+    borderColor: "rgba(255,255,255,0.12)",
+    paddingHorizontal: 16,
+    paddingVertical: 18,
+    color: "#F2EDE8",
+    fontFamily: "Inter_400Regular",
     fontSize: 16,
+    shadowColor: "#000",
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 4,
   },
 
+  // Button
+  buttonShadow: {
+    marginTop: 10,
+    borderRadius: 16,
+    shadowColor: "#8B1A2E",
+    shadowOpacity: 0.4,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
+  },
   button: {
-    backgroundColor: Colors.brand,
-    borderRadius: Radii.md,
-    paddingVertical: 16,
+    height: 56,
+    borderRadius: 16,
     alignItems: "center",
-    marginTop: Spacing.sm,
+    justifyContent: "center",
   },
-  buttonDisabled: { opacity: 0.6 },
   buttonText: {
-    fontFamily: Typography.sansSemiBold,
+    fontFamily: "Inter_500Medium",
     fontSize: 16,
-    color: Colors.textPrimary,
+    color: "#FFFFFF",
   },
 
+  // Footer
   footnote: {
-    fontFamily: Typography.sans,
+    fontFamily: "Inter_400Regular",
     fontSize: 12,
-    color: Colors.textMuted,
-    textAlign: "center",
+    color: "#6F6C66",
     lineHeight: 18,
+    textAlign: "center",
+    opacity: 0.7,
   },
 });

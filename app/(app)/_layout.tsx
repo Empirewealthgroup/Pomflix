@@ -1,5 +1,5 @@
 import { Tabs } from "expo-router";
-import { View, StyleSheet } from "react-native";
+import { View, StyleSheet, Platform } from "react-native";
 import { Colors, Typography } from "@/constants/theme";
 
 function HomeIcon({ focused }: { focused: boolean }) {
@@ -16,8 +16,12 @@ export default function AppLayout() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: Colors.surface,
-          borderTopColor: Colors.surfaceBorder,
+          position: "absolute",
+          backgroundColor:
+            Platform.OS === "ios"
+              ? "rgba(10,10,12,0.82)"
+              : "rgba(10,10,12,0.96)",
+          borderTopColor: "rgba(255,255,255,0.07)",
           borderTopWidth: 0.5,
           paddingBottom: 24,
           paddingTop: 10,
@@ -37,7 +41,8 @@ export default function AppLayout() {
         options={{
           title: "Home",
           tabBarIcon: ({ focused }) => (
-            <View style={[styles.tabIcon, focused && styles.tabIconActive]}>
+            <View style={styles.tabIcon}>
+              {focused && <View style={styles.activeGlow} />}
               <View style={[styles.dot, focused && styles.dotActive]} />
               <View style={[styles.dot, styles.dotSmall, focused && styles.dotActive]} />
               <View style={[styles.dot, focused && styles.dotActive]} />
@@ -48,9 +53,10 @@ export default function AppLayout() {
       <Tabs.Screen
         name="library"
         options={{
-          title: "Library",
+          title: "Browse",
           tabBarIcon: ({ focused }) => (
             <View style={styles.tabIcon}>
+              {focused && <View style={styles.activeGlow} />}
               <View style={[styles.shelf, focused && styles.shelfActive]} />
               <View style={[styles.shelf, styles.shelfThin, focused && styles.shelfActive]} />
               <View style={[styles.shelf, focused && styles.shelfActive]} />
@@ -78,6 +84,16 @@ const styles = StyleSheet.create({
     flexDirection: "column",
   },
   tabIconActive: {},
+  activeGlow: {
+    position: "absolute",
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: Colors.textPrimary,
+    opacity: 0.07,
+    alignSelf: "center",
+    top: -6,
+  },
   dot: {
     width: 18,
     height: 2.5,

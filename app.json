@@ -18,7 +18,8 @@
       "infoPlist": {
         "UIRequiresFullScreen": true,
         "NSMicrophoneUsageDescription": "Pomflix does not use the microphone.",
-        "NSCameraUsageDescription": "Pomflix does not use the camera."
+        "NSCameraUsageDescription": "Pomflix does not use the camera.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "web": {
@@ -29,7 +30,6 @@
       "expo-router",
       "expo-video",
       "expo-secure-store",
-      "expo-image",
       "expo-font"
     ],
     "experiments": {
@@ -37,8 +37,10 @@
     },
     "extra": {
       "eas": {
-        "projectId": "YOUR_EAS_PROJECT_ID"
-      }
-    }
+        "projectId": "5c674527-36f7-498e-a7bf-41b1fb057fd5"
+      },
+      "router": {}
+    },
+    "owner": "jsparxx201"
   }
 }
