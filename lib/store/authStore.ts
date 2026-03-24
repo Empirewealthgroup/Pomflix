@@ -14,6 +14,7 @@ type AuthState = {
   userName: string | null;
   serverUrl: string | null;
   isLoading: boolean;
+  isNewLogin: boolean;
 
   setAuth: (data: {
     token: string;
@@ -22,6 +23,7 @@ type AuthState = {
     serverUrl: string;
   }) => Promise<void>;
 
+  clearNewLogin: () => void;
   loadStoredAuth: () => Promise<boolean>;
   logout: () => Promise<void>;
 };
@@ -32,6 +34,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   userName: null,
   serverUrl: null,
   isLoading: true,
+  isNewLogin: false,
 
   setAuth: async ({ token, userId, userName, serverUrl }) => {
     await Promise.all([
@@ -40,8 +43,10 @@ export const useAuthStore = create<AuthState>((set) => ({
       SecureStore.setItemAsync(KEYS.serverUrl, serverUrl),
       SecureStore.setItemAsync(KEYS.userName, userName),
     ]);
-    set({ token, userId, userName, serverUrl, isLoading: false });
+    set({ token, userId, userName, serverUrl, isLoading: false, isNewLogin: true });
   },
+
+  clearNewLogin: () => set({ isNewLogin: false }),
 
   loadStoredAuth: async () => {
     try {

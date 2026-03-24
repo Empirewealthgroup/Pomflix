@@ -7,12 +7,12 @@
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-  Alert,
   ScrollView,
   Animated,
 } from "react-native";
 import { useEffect, useRef, useState } from "react";
 import { LinearGradient } from "expo-linear-gradient";
+import * as Haptics from "expo-haptics";
 import { useAuthStore } from "@/lib/store/authStore";
 import { authenticateUser } from "@/lib/jellyfin/auth";
 import { SERVER_URL } from "@/constants/config";
@@ -22,6 +22,7 @@ export default function LoginScreen() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   // Load animations
   const logoOpacity = useRef(new Animated.Value(0)).current;
@@ -35,6 +36,13 @@ export default function LoginScreen() {
   // Button press
   const buttonScale = useRef(new Animated.Value(1)).current;
   const buttonOpacity = useRef(new Animated.Value(1)).current;
+
+  // Post-login screen fade to dark
+  const screenFade = useRef(new Animated.Value(0)).current;
+
+  // Shake + error border for failed login
+  const shakeAnim = useRef(new Animated.Value(0)).current;
+  const [fieldHasError, setFieldHasError] = useState(false);
 
   useEffect(() => {
     // Entrance sequence
@@ -88,6 +96,14 @@ export default function LoginScreen() {
     };
   }, []);
 
+  const shake = () =>
+    Animated.sequence([
+      Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 6, duration: 40, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 0, duration: 40, useNativeDriver: true }),
+    ]).start();
+
   const handlePressIn = () => {
     Animated.parallel([
       Animated.timing(buttonScale, { toValue: 0.97, duration: 80, useNativeDriver: true }),
@@ -104,22 +120,32 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     if (!username.trim()) {
-      Alert.alert("Missing Info", "Please enter your username.");
+      setLoginError("Please enter your username.");
       return;
     }
+    setLoginError(null);
     setLoading(true);
     try {
       const res = await authenticateUser(SERVER_URL, username.trim(), password);
-      await setAuth({
-        token: res.AccessToken,
-        userId: res.User.Id,
-        userName: res.User.Name,
-        serverUrl: SERVER_URL,
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // Fade screen to dark first, then set auth (navigation fires automatically)
+      Animated.timing(screenFade, {
+        toValue: 1,
+        duration: 380,
+        useNativeDriver: true,
+      }).start(async () => {
+        await setAuth({
+          token: res.AccessToken,
+          userId: res.User.Id,
+          userName: res.User.Name,
+          serverUrl: SERVER_URL,
+        });
       });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Login failed.";
-      Alert.alert("Could Not Connect", message);
-    } finally {
+    } catch {
+      setLoginError("That didn't work. Check your credentials and try again.");
+      setFieldHasError(true);
+      shake();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       setLoading(false);
     }
   };
@@ -162,17 +188,17 @@ export default function LoginScreen() {
           <Animated.View
             style={[
               styles.form,
-              { opacity: formOpacity, transform: [{ translateY: formTranslate }] },
+              { opacity: formOpacity, transform: [{ translateY: formTranslate }, { translateX: shakeAnim }] },
             ]}
           >
             <View style={styles.fieldGroup}>
               <Text style={styles.label}>USERNAME</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, fieldHasError && { borderColor: "#E05A6A" }]}
                 placeholder="Enter your username"
                 placeholderTextColor="#6F6C66"
                 value={username}
-                onChangeText={setUsername}
+                onChangeText={(v) => { setUsername(v); setFieldHasError(false); }}
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardAppearance="dark"
@@ -182,15 +208,20 @@ export default function LoginScreen() {
             <View style={styles.fieldGroup}>
               <Text style={styles.label}>PASSWORD</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, fieldHasError && { borderColor: "#E05A6A" }]}
                 placeholder="Enter your password"
                 placeholderTextColor="#6F6C66"
                 value={password}
-                onChangeText={setPassword}
+                onChangeText={(v) => { setPassword(v); setFieldHasError(false); }}
                 secureTextEntry
                 keyboardAppearance="dark"
               />
             </View>
+
+            {/* Inline error */}
+            {loginError ? (
+              <Text style={styles.errorText}>{loginError}</Text>
+            ) : null}
 
             {/* Sign In */}
             <Animated.View
@@ -229,6 +260,11 @@ export default function LoginScreen() {
           </Animated.Text>
         </ScrollView>
       </KeyboardAvoidingView>
+      {/* Post-login fade to dark */}
+      <Animated.View
+        pointerEvents="none"
+        style={[StyleSheet.absoluteFill, { backgroundColor: "#0A0A0C", opacity: screenFade }]}
+      />
     </View>
   );
 }
@@ -361,5 +397,15 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     textAlign: "center",
     opacity: 0.7,
+  },
+
+  // Inline error
+  errorText: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    color: "#E05A6A",
+    textAlign: "center",
+    lineHeight: 18,
+    marginTop: 2,
   },
 });

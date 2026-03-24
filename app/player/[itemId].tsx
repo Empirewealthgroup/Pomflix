@@ -6,6 +6,7 @@ import {
   StatusBar,
   Dimensions,
   Animated,
+  PanResponder,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
@@ -13,6 +14,7 @@ import { VideoView, useVideoPlayer } from "expo-video";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuthStore } from "@/lib/store/authStore";
+import { useSessionStore } from "@/lib/store/sessionStore";
 import {
   getPlaybackInfo,
   getStreamUrl,
@@ -21,21 +23,37 @@ import {
   reportPlaybackStopped,
 } from "@/lib/jellyfin/media";
 import { Colors, Typography } from "@/constants/theme";
+import { useNowPlayingStore } from "@/lib/store/nowPlayingStore";
+import { useFeedbackStore, type FeedbackRating } from "@/lib/store/feedbackStore";
 
 const { width, height } = Dimensions.get("window");
 
 const PROGRESS_INTERVAL_MS = 10_000;
 
+// One-time swipe hint — module level so it survives re-renders, not re-navigations
+let _swipeHintSeen = false;
+
 export default function PlayerScreen() {
-  const { itemId } = useLocalSearchParams<{ itemId: string }>();
+  const { itemId, itemName } = useLocalSearchParams<{ itemId: string; itemName?: string }>();
   const router = useRouter();
   const { serverUrl, token, userId } = useAuthStore();
+  const { updateSessionItem, currentSession } = useSessionStore();
+  const { setNowPlaying, updateNowPlayingProgress, clearNowPlaying } = useNowPlayingStore();
+  const { setFeedback } = useFeedbackStore();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [showControls, setShowControls] = useState(true);
+  const [showMoodCheck, setShowMoodCheck] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Mood check animations
+  const moodSlideAnim = useRef(new Animated.Value(200)).current;
+  const moodFadeAnim = useRef(new Animated.Value(0)).current;
+
+  // Track actual watch duration
+  const watchStartTime = useRef<number>(0);
 
   // Playback reporting refs
   const mediaSourceId = useRef<string>("");
@@ -47,6 +65,49 @@ export default function PlayerScreen() {
   // Animations
   const controlsAnim = useRef(new Animated.Value(1)).current;
   const videoAnim = useRef(new Animated.Value(0)).current;
+
+  // Swipe-down to dismiss
+  const swipeY = useRef(new Animated.Value(0)).current;
+  const swipeHintOpacity = useRef(new Animated.Value(_swipeHintSeen ? 0 : 1)).current;
+
+  useEffect(() => {
+    if (_swipeHintSeen) return;
+    const t = setTimeout(() => {
+      Animated.timing(swipeHintOpacity, {
+        toValue: 0, duration: 700, useNativeDriver: true,
+      }).start(() => { _swipeHintSeen = true; });
+    }, 2200);
+    return () => clearTimeout(t);
+  }, []);
+
+  const swipePan = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gs) =>
+        gs.dy > 12 && gs.dy > Math.abs(gs.dx) * 1.5,
+      onPanResponderMove: (_, gs) => {
+        if (gs.dy > 0) swipeY.setValue(gs.dy);
+      },
+      onPanResponderRelease: (_, gs) => {
+        if (gs.dy > 80 || gs.vy > 0.5) {
+          Animated.timing(swipeY, {
+            toValue: height + 60,
+            duration: 260,
+            useNativeDriver: true,
+          }).start(() => {
+            swipeY.setValue(0);
+            handleClose();
+          });
+        } else {
+          Animated.spring(swipeY, {
+            toValue: 0,
+            useNativeDriver: true,
+            tension: 200,
+            friction: 16,
+          }).start();
+        }
+      },
+    })
+  ).current;
 
   // Resolve stream URL
   useEffect(() => {
@@ -73,7 +134,7 @@ export default function PlayerScreen() {
     };
   }, [itemId, serverUrl, token, userId]);
 
-  // Fade video in when stream is ready
+  // Fade video in + register now playing when stream is ready
   useEffect(() => {
     if (streamUrl) {
       Animated.timing(videoAnim, {
@@ -81,6 +142,13 @@ export default function PlayerScreen() {
         duration: 600,
         useNativeDriver: true,
       }).start();
+      watchStartTime.current = Date.now();
+      setNowPlaying({
+        itemId: itemId!,
+        itemName: itemName || itemId!,
+        modeColor: currentSession?.modeColor ?? "#8B1A2E",
+        progress: 0,
+      });
     }
   }, [streamUrl]);
 
@@ -96,13 +164,28 @@ export default function PlayerScreen() {
   useEffect(() => {
     if (!streamUrl || !serverUrl || !token) return;
     progressTimer.current = setInterval(() => {
-      const ticks = (player.currentTime ?? 0) * 10_000_000;
-      lastPositionTicks.current = ticks;
+      let ticks = lastPositionTicks.current;
+      let currentTime = 0;
+      let duration = 0;
+      let isPlaying = false;
+      try {
+        currentTime = player.currentTime ?? 0;
+        duration = player.duration ?? 0;
+        isPlaying = player.playing;
+        ticks = currentTime * 10_000_000;
+        lastPositionTicks.current = ticks;
+      } catch {
+        // native player released mid-interval — use cached value
+      }
       reportPlaybackProgress(
         serverUrl, token, itemId!,
         mediaSourceId.current, playSessionId.current,
-        ticks, !player.playing
+        ticks, !isPlaying
       );
+      // Update session with current item + progress
+      const pct = duration > 0 ? (currentTime / duration) * 100 : 0;
+      updateSessionItem(itemId!, itemName || itemId!, pct);
+      updateNowPlayingProgress(pct);
     }, PROGRESS_INTERVAL_MS);
     return () => { if (progressTimer.current) clearInterval(progressTimer.current); };
   }, [streamUrl]);
@@ -110,7 +193,15 @@ export default function PlayerScreen() {
   const stopAndReport = () => {
     if (progressTimer.current) clearInterval(progressTimer.current);
     if (serverUrl && token && itemId) {
-      const ticks = (player.currentTime ?? 0) * 10_000_000;
+      // player.currentTime can throw if the native object has already been
+      // released (e.g. after the swipe-down animation completes). Fall back
+      // to the last value cached by the progress interval.
+      let ticks = lastPositionTicks.current;
+      try {
+        ticks = (player.currentTime ?? 0) * 10_000_000;
+      } catch {
+        // native player already released — use cached value
+      }
       reportPlaybackStopped(
         serverUrl, token, itemId,
         mediaSourceId.current, playSessionId.current, ticks
@@ -152,8 +243,34 @@ export default function PlayerScreen() {
 
   const handleClose = () => {
     stopAndReport();
-    player.pause();
-    router.back();
+    try { player.pause(); } catch { /* native object already released */ }
+    const elapsedMs = Date.now() - watchStartTime.current;
+    const MIN_10 = 10 * 60 * 1000;
+    if (elapsedMs >= MIN_10) {
+      setShowMoodCheck(true);
+      Animated.parallel([
+        Animated.spring(moodSlideAnim, {
+          toValue: 0, friction: 10, tension: 120, useNativeDriver: true,
+        }),
+        Animated.timing(moodFadeAnim, {
+          toValue: 1, duration: 260, useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      clearNowPlaying();
+      router.back();
+    }
+  };
+
+  const dismissMoodCheck = (rating?: FeedbackRating) => {
+    if (rating && itemId) setFeedback(itemId, rating);
+    Animated.parallel([
+      Animated.timing(moodSlideAnim, { toValue: 200, duration: 200, useNativeDriver: true }),
+      Animated.timing(moodFadeAnim, { toValue: 0, duration: 180, useNativeDriver: true }),
+    ]).start(() => {
+      clearNowPlaying();
+      router.back();
+    });
   };
 
   return (
@@ -184,7 +301,25 @@ export default function PlayerScreen() {
       {/* ── Video ──────────────────────────────────────────────────── */}
       {streamUrl && (
         <>
-          <Animated.View style={[styles.videoWrapper, { opacity: videoAnim }]}>
+          <Animated.View
+            {...swipePan.panHandlers}
+            style={[
+              styles.videoWrapper,
+              {
+                opacity: videoAnim,
+                transform: [
+                  { translateY: swipeY },
+                  {
+                    scale: swipeY.interpolate({
+                      inputRange: [0, 320],
+                      outputRange: [1, 0.88],
+                      extrapolate: "clamp",
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
             <TouchableOpacity
               style={StyleSheet.absoluteFill}
               onPress={toggleControls}
@@ -197,6 +332,16 @@ export default function PlayerScreen() {
                 nativeControls
               />
             </TouchableOpacity>
+
+            {/* One-time swipe hint */}
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.swipeHintOverlay, { opacity: Animated.multiply(videoAnim, swipeHintOpacity) as any }]}
+            >
+              <View style={styles.swipeHintPill}>
+                <Text style={styles.swipeHintText}>↓  Swipe to close</Text>
+              </View>
+            </Animated.View>
           </Animated.View>
 
           {/* Controls overlay */}
@@ -224,6 +369,55 @@ export default function PlayerScreen() {
             </Animated.View>
           )}
         </>
+      )}
+      {/* ── Mood Check-In ───────────────────────────────────────── */}
+      {showMoodCheck && (
+        <Animated.View
+          style={[
+            styles.moodBackdrop,
+            { opacity: moodFadeAnim },
+          ]}
+          pointerEvents="box-none"
+        >
+          <Animated.View
+            style={[
+              styles.moodSheet,
+              { transform: [{ translateY: moodSlideAnim }] },
+            ]}
+          >
+            <Text style={styles.moodTitle}>How was that?</Text>
+            <Text style={styles.moodSub}>Your taste shapes what we pick next.</Text>
+            <View style={styles.moodOptions}>
+              <TouchableOpacity
+                style={styles.moodBtn}
+                onPress={() => dismissMoodCheck("perfect")}
+                activeOpacity={0.78}
+              >
+                <Text style={styles.moodEmoji}>😌</Text>
+                <Text style={styles.moodBtnLabel}>Perfect</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.moodBtn}
+                onPress={() => dismissMoodCheck("okay")}
+                activeOpacity={0.78}
+              >
+                <Text style={styles.moodEmoji}>😐</Text>
+                <Text style={styles.moodBtnLabel}>Okay</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.moodBtn}
+                onPress={() => dismissMoodCheck("skip")}
+                activeOpacity={0.78}
+              >
+                <Text style={styles.moodEmoji}>❌</Text>
+                <Text style={styles.moodBtnLabel}>Not for me</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity onPress={() => dismissMoodCheck()} hitSlop={10}>
+              <Text style={styles.moodSkip}>Skip</Text>
+            </TouchableOpacity>
+          </Animated.View>
+        </Animated.View>
       )}
     </View>
   );
@@ -303,6 +497,29 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "#000",
   },
+
+  swipeHintOverlay: {
+    position: "absolute",
+    bottom: 90,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    pointerEvents: "none",
+  },
+  swipeHintPill: {
+    backgroundColor: "rgba(0,0,0,0.55)",
+    borderRadius: 20,
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderWidth: 0.5,
+    borderColor: "rgba(255,255,255,0.14)",
+  },
+  swipeHintText: {
+    fontFamily: Typography.sansMedium,
+    fontSize: 13,
+    color: "rgba(255,255,255,0.82)",
+    letterSpacing: 0.2,
+  },
   video: {
     width,
     height,
@@ -343,4 +560,67 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.textPrimary,
   },
+
+  // ── Mood Check-In ────────────────────────────────────────────────
+  moodBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.62)",
+    justifyContent: "flex-end",
+  },
+  moodSheet: {
+    backgroundColor: "#141418",
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    borderWidth: 0.6,
+    borderBottomWidth: 0,
+    borderColor: "rgba(255,255,255,0.1)",
+    paddingHorizontal: 28,
+    paddingTop: 28,
+    paddingBottom: 46,
+    alignItems: "center",
+    gap: 10,
+  },
+  moodTitle: {
+    fontFamily: Typography.display,
+    fontSize: 24,
+    color: Colors.textPrimary,
+    letterSpacing: -0.4,
+  },
+  moodSub: {
+    fontFamily: Typography.sans,
+    fontSize: 13,
+    color: Colors.textMuted,
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  moodOptions: {
+    flexDirection: "row",
+    gap: 16,
+    marginBottom: 10,
+  },
+  moodBtn: {
+    flex: 1,
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 16,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderWidth: 0.6,
+    borderColor: "rgba(255,255,255,0.1)",
+  },
+  moodEmoji: {
+    fontSize: 28,
+  },
+  moodBtnLabel: {
+    fontFamily: Typography.sansMedium,
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  moodSkip: {
+    fontFamily: Typography.sans,
+    fontSize: 13,
+    color: Colors.textMuted,
+    marginTop: 4,
+  },
 });
+

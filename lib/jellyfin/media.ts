@@ -329,6 +329,30 @@ export async function getSimilarItems(
   return res.Items ?? [];
 }
 
+// ── Recently Added ────────────────────────────────────────────────────────
+
+export async function getRecentlyAdded(
+  serverUrl: string,
+  token: string,
+  userId: string,
+  limit = 12
+): Promise<JellyfinItem[]> {
+  const items = await jellyfinFetch<JellyfinItem[]>(
+    serverUrl,
+    `/Users/${userId}/Items/Latest`,
+    {
+      token,
+      params: {
+        Limit: limit,
+        Fields: FIELDS,
+        IncludeItemTypes: "Movie,Series",
+        EnableImageTypes: "Primary,Backdrop",
+      },
+    }
+  );
+  return Array.isArray(items) ? items : [];
+}
+
 // ── Runtime helpers ───────────────────────────────────────────────────────
 
 export function ticksToMinutes(ticks: number): number {

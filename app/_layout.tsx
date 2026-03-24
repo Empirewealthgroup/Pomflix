@@ -65,10 +65,10 @@ export default function RootLayout() {
       <AuthGuard />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#0A0A0C" } }}>
         <Stack.Screen name="(auth)" />
-        <Stack.Screen name="(app)" />
+        <Stack.Screen name="(app)" options={{ animation: "fade" }} />
         <Stack.Screen
           name="mode/[id]"
-          options={{ animation: "fade_from_bottom" }}
+          options={{ animation: "none" }}
         />
         <Stack.Screen
           name="item/[itemId]"

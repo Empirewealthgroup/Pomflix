@@ -16,18 +16,26 @@ import { Colors, Typography, Spacing, Radii } from "@/constants/theme";
 const { width } = Dimensions.get("window");
 const CARD_WIDTH = (width - Spacing.screen * 2 - Spacing.sm) / 2;
 
+// Show the long-press hint only once per app session
+let _hintShown = false;
+
 interface ModeCardProps {
   mode: Mode;
   isRecent?: boolean;
+  isRecommended?: boolean;
   enterDelay?: number;
   onQuickPlay?: (modeId: string) => void;
+  /** Called on press — parent animates a color transition then calls navigate() */
+  onTransition?: (color: string, navigate: () => void) => void;
 }
 
 export default function ModeCard({
   mode,
   isRecent = false,
+  isRecommended = false,
   enterDelay = 0,
   onQuickPlay,
+  onTransition,
 }: ModeCardProps) {
   const router = useRouter();
 
@@ -37,6 +45,17 @@ export default function ModeCard({
 
   // Press depth
   const scale = useRef(new Animated.Value(1)).current;
+  const hintOpacity = useRef(new Animated.Value(_hintShown ? 0 : 1)).current;
+
+  // Fade hint out after first viewing, never show again this session
+  useEffect(() => {
+    if (_hintShown) return;
+    const t = setTimeout(() => {
+      Animated.timing(hintOpacity, { toValue: 0, duration: 700, useNativeDriver: true })
+        .start(() => { _hintShown = true; });
+    }, 2600);
+    return () => clearTimeout(t);
+  }, []);
 
   useEffect(() => {
     Animated.parallel([
@@ -63,13 +82,24 @@ export default function ModeCard({
 
   const handlePress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    router.push(`/mode/${mode.id}`);
+    const navigate = () => router.push(`/mode/${mode.id}`);
+    if (onTransition) {
+      onTransition(mode.colors.base, navigate);
+    } else {
+      navigate();
+    }
   };
 
   const handleLongPress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     onQuickPlay?.(mode.id);
-    router.push({ pathname: `/mode/${mode.id}`, params: { autoPlay: "1" } });
+    const navigate = () =>
+      router.push({ pathname: `/mode/${mode.id}`, params: { autoPlay: "1" } });
+    if (onTransition) {
+      onTransition(mode.colors.base, navigate);
+    } else {
+      navigate();
+    }
   };
 
   return (
@@ -100,8 +130,22 @@ export default function ModeCard({
             pointerEvents="none"
           />
 
-          {/* Recently used badge */}
-          {isRecent && (
+          {/* Recommended or Recent badge */}
+          {isRecommended ? (
+            <View
+              style={[
+                styles.badge,
+                {
+                  backgroundColor: `${mode.colors.accent}2A`,
+                  borderColor: `${mode.colors.accent}66`,
+                },
+              ]}
+            >
+              <Text style={[styles.badgeText, { color: mode.colors.accent }]}>
+                ✶ Now
+              </Text>
+            </View>
+          ) : isRecent ? (
             <View
               style={[
                 styles.badge,
@@ -115,7 +159,7 @@ export default function ModeCard({
                 Recent
               </Text>
             </View>
-          )}
+          ) : null}
 
           {/* Icon */}
           <Text style={[styles.icon, { color: mode.colors.accent }]}>{mode.icon}</Text>
@@ -126,6 +170,7 @@ export default function ModeCard({
             <Text style={[styles.tagline, { color: mode.colors.textAccent }]}>
               {mode.tagline}
             </Text>
+            <Animated.Text style={[styles.holdHint, { opacity: hintOpacity }]}>Hold to play instantly</Animated.Text>
           </View>
         </LinearGradient>
       </TouchableOpacity>
@@ -193,5 +238,12 @@ const styles = StyleSheet.create({
     fontFamily: Typography.sans,
     fontSize: 12,
     lineHeight: 16,
+  },
+  holdHint: {
+    fontFamily: Typography.sans,
+    fontSize: 10,
+    color: "rgba(255,255,255,0.28)",
+    marginTop: 6,
+    letterSpacing: 0.2,
   },
 });
