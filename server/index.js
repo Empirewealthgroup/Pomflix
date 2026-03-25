@@ -1,6 +1,7 @@
 require("dotenv").config({ path: require("path").join(__dirname, ".env") });
 const express = require("express");
 const cors = require("cors");
+const rateLimit = require("express-rate-limit");
 
 const app = express();
 app.use(express.json());
@@ -8,20 +9,38 @@ app.use(cors());
 
 const JELLYFIN_URL = process.env.JELLYFIN_URL || "https://jellyfin.pomflix.com";
 const API_KEY = process.env.JELLYFIN_API_KEY;
+const SIGNUP_SECRET = process.env.SIGNUP_SECRET;
 const PORT = process.env.PORT || 3001;
 
 if (!API_KEY) {
   console.error("❌  JELLYFIN_API_KEY is not set in .env — server cannot start safely.");
   process.exit(1);
+}if (!SIGNUP_SECRET) {
+  console.error("\u274c  SIGNUP_SECRET is not set in .env \u2014 server cannot start safely.");
+  process.exit(1);
 }
 
+// Rate limiter: max 5 signup attempts per IP per 15 minutes
+const signupLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many signup attempts. Please try again later." },
+});
 // ─── Health check ────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
 
 // ─── Signup ───────────────────────────────────────────────────────────────────
-app.post("/signup", async (req, res) => {
+app.post("/signup", signupLimiter, async (req, res) => {
+  // Verify shared secret — rejects any caller that isn't the Pomflix app
+  const secret = req.headers["x-pomflix-secret"];
+  if (!secret || secret !== SIGNUP_SECRET) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
   const { name, email, username, password } = req.body;
 
   // Input validation

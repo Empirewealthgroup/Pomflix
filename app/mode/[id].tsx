@@ -18,12 +18,21 @@ import { Image } from "expo-image";
 import { getModeById } from "@/constants/modes";
 import { useAuthStore } from "@/lib/store/authStore";
 import { useSessionStore } from "@/lib/store/sessionStore";
-import { getSuggestionsForMode, getBackdropImageUrl, getPrimaryImageUrl, formatRuntime } from "@/lib/jellyfin/media";
+import { getSuggestionsForMode, getContentForModeTab, getBackdropImageUrl, getPrimaryImageUrl, formatRuntime } from "@/lib/jellyfin/media";
 import type { JellyfinItem } from "@/lib/jellyfin/types";
 import { Colors, Typography, Spacing, Radii } from "@/constants/theme";
 import { useFeedbackStore } from "@/lib/store/feedbackStore";
+import { useSettingsStore } from "@/lib/store/settingsStore";
 
 const { width } = Dimensions.get("window");
+
+type TabId = "suggested" | "movies" | "shows" | "docs";
+const TABS: { id: TabId; label: string }[] = [
+  { id: "suggested", label: "Suggested" },
+  { id: "movies",   label: "Movies" },
+  { id: "shows",    label: "Shows" },
+  { id: "docs",     label: "Docs" },
+];
 
 export default function ModeScreen() {
   const { id, autoPlay } = useLocalSearchParams<{ id: string; autoPlay?: string }>();
@@ -37,17 +46,40 @@ export default function ModeScreen() {
   const poolRef = useRef<JellyfinItem[]>([]);
   const isFetchingMoreRef = useRef(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
 
-  const { startSession } = useSessionStore();
+  const { startSession, currentSession, addRecentMoodId } = useSessionStore();
   const { getFeedback, isSkipped } = useFeedbackStore();
+  const { prefs, loadPrefs } = useSettingsStore();
 
-  // Apply feedback scoring: filter skipped, surface perfect
+  useEffect(() => { if (userId) loadPrefs(userId); }, [userId]);
+
+  // Effective max runtime: user pref overrides mood default (stricter wins)
+  const effectiveMaxRuntime = (() => {
+    const moodMax = mode?.maxRuntimeMinutes ?? null;
+    const userMax = prefs.maxRuntimeMinutes;
+    if (moodMax === null) return userMax;
+    if (userMax === null) return moodMax;
+    return Math.min(moodMax, userMax);
+  })();
+
+  const [activeTab, setActiveTab] = useState<TabId>("suggested");
+  const [tabItems, setTabItems] = useState<Record<"movies" | "shows" | "docs", JellyfinItem[] | null>>({
+    movies: null, shows: null, docs: null,
+  });
+  const [tabLoading, setTabLoading] = useState<Record<"movies" | "shows" | "docs", boolean>>({
+    movies: false, shows: false, docs: false,
+  });
+
+  // Apply feedback scoring: respects feedbackSensitivity preference
   const applyFeedback = (items: JellyfinItem[]) => {
-    const valid = items.filter((i) => !isSkipped(i.Id));
+    const valid = prefs.feedbackSensitivity === "strict"
+      ? items.filter((i) => !isSkipped(i.Id))
+      : items; // relaxed: keep skipped, just rank them lower
     valid.sort((a, b) => {
-      const pa = getFeedback(a.Id) === "perfect" ? -1 : 0;
-      const pb = getFeedback(b.Id) === "perfect" ? -1 : 0;
+      const pa = getFeedback(a.Id) === "perfect" ? -1 : getFeedback(a.Id) === "skip" ? 1 : 0;
+      const pb = getFeedback(b.Id) === "perfect" ? -1 : getFeedback(b.Id) === "skip" ? 1 : 0;
       return pa - pb;
     });
     return valid;
@@ -80,8 +112,10 @@ export default function ModeScreen() {
     if (!mode || !serverUrl || !token || !userId) return;
     // Start / resume the session for this mode
     startSession(mode.id, mode.label, mode.icon, mode.colors.base);
+    addRecentMoodId(mode.id);
     setLoading(true);
-    getSuggestionsForMode(serverUrl, token, userId, mode, FETCH_COUNT)
+    setLoadError(false);
+    getSuggestionsForMode(serverUrl, token, userId, mode, FETCH_COUNT, effectiveMaxRuntime)
       .then((items) => {
         const ranked = applyFeedback(items);
         const visible = ranked.slice(0, VISIBLE_COUNT);
@@ -95,7 +129,7 @@ export default function ModeScreen() {
           });
         }
       })
-      .catch(() => {})
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
   }, [mode?.id]);
 
@@ -127,7 +161,7 @@ export default function ModeScreen() {
     // Silently refetch when pool runs low
     if (poolRef.current.length < 3 && !isFetchingMoreRef.current && mode && serverUrl && token && userId) {
       isFetchingMoreRef.current = true;
-      getSuggestionsForMode(serverUrl, token, userId, mode, FETCH_COUNT)
+      getSuggestionsForMode(serverUrl, token, userId, mode, FETCH_COUNT, effectiveMaxRuntime)
         .then((fresh) => { poolRef.current = [...poolRef.current, ...applyFeedback(fresh)]; })
         .catch(() => {})
         .finally(() => { isFetchingMoreRef.current = false; });
@@ -150,6 +184,39 @@ export default function ModeScreen() {
       pathname: "/player/[itemId]",
       params: { itemId: pick.Id, itemName: pick.Name ?? "" },
     });
+  };
+
+  const loadTab = async (tab: "movies" | "shows" | "docs") => {
+    if (!serverUrl || !token || !userId || !mode) return;
+    if (tabItems[tab] !== null) return; // already cached
+    setTabLoading((prev) => ({ ...prev, [tab]: true }));
+    try {
+      const items = await getContentForModeTab(serverUrl, token, userId, mode, tab);
+      setTabItems((prev) => ({ ...prev, [tab]: items }));
+    } catch {
+      setTabItems((prev) => ({ ...prev, [tab]: [] }));
+    } finally {
+      setTabLoading((prev) => ({ ...prev, [tab]: false }));
+    }
+  };
+
+  const handleTabChange = (tab: TabId) => {
+    setActiveTab(tab);
+    if (tab !== "suggested") loadTab(tab as "movies" | "shows" | "docs");
+  };
+
+  const handleStartSession = () => {
+    const candidates = [...visibleItems, ...poolRef.current]
+      .filter((i) => !isSkipped(i.Id) && i.Id !== currentSession?.lastItemId);
+    candidates.sort((a, b) => {
+      const pa = getFeedback(a.Id) === "perfect" ? -1 : 0;
+      const pb = getFeedback(b.Id) === "perfect" ? -1 : 0;
+      return pa - pb;
+    });
+    const pick = candidates[0] ?? visibleItems[0];
+    if (!pick) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    router.push({ pathname: "/player/[itemId]", params: { itemId: pick.Id, itemName: pick.Name ?? "" } });
   };
 
   return (
@@ -200,44 +267,127 @@ export default function ModeScreen() {
             <Text style={styles.modeDescription}>{mode.description}</Text>
           </Animated.View>
 
-          {/* Suggestions */}
-          <Animated.View style={[styles.suggestionsSection, { opacity: listAnim }]}>
-            <Text style={styles.sectionLabel}>Curated for this moment</Text>
+          {/* ── Start Session ─────────────────────────────────────── */}
+          <Animated.View style={{ opacity: listAnim }}>
+            <TouchableOpacity
+              style={styles.startBtn}
+              onPress={handleStartSession}
+              activeOpacity={0.88}
+              disabled={loading || (visibleItems.length === 0 && poolRef.current.length === 0)}
+            >
+              <LinearGradient
+                colors={[mode.colors.accent, `${mode.colors.base}CC`]}
+                start={{ x: 0, y: 0.5 }}
+                end={{ x: 1, y: 0.5 }}
+                style={styles.startBtnGrad}
+              >
+                <Text style={styles.startBtnText}>▶  Start Session</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </Animated.View>
 
-            {loading ? (
-              <ActivityIndicator color={mode.colors.accent} style={{ marginTop: Spacing.xl }} />
-            ) : visibleItems.length === 0 ? (
-              <Text style={styles.empty}>No suggestions found. Try the Library.</Text>
+          {/* ── Tabs ──────────────────────────────────────────────── */}
+          <Animated.View style={[styles.tabBar, { opacity: listAnim }]}>
+            {TABS.map((tab) => (
+              <TouchableOpacity
+                key={tab.id}
+                style={styles.tab}
+                onPress={() => handleTabChange(tab.id)}
+                activeOpacity={0.75}
+              >
+                <Text style={[styles.tabText, activeTab === tab.id && { color: mode.colors.accent }]}>
+                  {tab.label}
+                </Text>
+                {activeTab === tab.id && (
+                  <View style={[styles.tabIndicator, { backgroundColor: mode.colors.accent }]} />
+                )}
+              </TouchableOpacity>
+            ))}
+          </Animated.View>
+
+          {/* ── Tab content ───────────────────────────────────────── */}
+          <Animated.View style={{ opacity: listAnim }}>
+            {activeTab === "suggested" ? (
+              <View style={styles.suggestionsSection}>
+                {loading ? (
+                  <ActivityIndicator color={mode.colors.accent} style={{ marginTop: Spacing.xl }} />
+                ) : loadError ? (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setLoadError(false);
+                      setLoading(true);
+                      getSuggestionsForMode(serverUrl!, token!, userId!, mode, FETCH_COUNT, effectiveMaxRuntime)
+                        .then((items) => {
+                          const ranked = applyFeedback(items);
+                          poolRef.current = ranked.slice(VISIBLE_COUNT);
+                          setVisibleItems(ranked.slice(0, VISIBLE_COUNT));
+                        })
+                        .catch(() => setLoadError(true))
+                        .finally(() => setLoading(false));
+                    }}
+                    style={{ alignItems: "center", marginTop: Spacing.xl }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.empty, { color: Colors.textMuted }]}>
+                      Could not load content — tap to retry
+                    </Text>
+                  </TouchableOpacity>
+                ) : visibleItems.length === 0 ? (
+                  <Text style={styles.empty}>No suggestions found. Try the Library.</Text>
+                ) : (
+                  <View style={styles.suggestionsList}>
+                    {visibleItems.map((item) => {
+                      const isSelected = selected === item.Id;
+                      const imageUrl =
+                        serverUrl && item.BackdropImageTags?.[0]
+                          ? getBackdropImageUrl(serverUrl, item.Id, item.BackdropImageTags[0], width * 2)
+                          : serverUrl && item.ImageTags?.Primary
+                          ? getPrimaryImageUrl(serverUrl, item.Id, item.ImageTags.Primary, 600)
+                          : undefined;
+                      return (
+                        <SuggestionCard
+                          key={item.Id}
+                          item={item}
+                          imageUrl={imageUrl}
+                          isSelected={isSelected}
+                          accentColor={mode.colors.accent}
+                          isNew={newItemIds.has(item.Id)}
+                          onToggle={() => setSelected(isSelected ? null : item.Id)}
+                          onPlay={() => handlePlay(item.Id, item.Name)}
+                          onDismiss={() => handleDismiss(item.Id)}
+                        />
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
             ) : (
-              <View style={styles.suggestionsList}>
-                {visibleItems.map((item) => {
-                  const isSelected = selected === item.Id;
-                  const imageUrl =
-                    serverUrl && item.BackdropImageTags?.[0]
-                      ? getBackdropImageUrl(serverUrl, item.Id, item.BackdropImageTags[0], width * 2)
-                      : serverUrl && item.ImageTags?.Primary
-                      ? getPrimaryImageUrl(serverUrl, item.Id, item.ImageTags.Primary, 600)
-                      : undefined;
-
-                  return (
-                    <SuggestionCard
-                      key={item.Id}
-                      item={item}
-                      imageUrl={imageUrl}
-                      isSelected={isSelected}
-                      accentColor={mode.colors.accent}
-                      isNew={newItemIds.has(item.Id)}
-                      onToggle={() => setSelected(isSelected ? null : item.Id)}
-                      onPlay={() => handlePlay(item.Id, item.Name)}
-                      onDismiss={() => handleDismiss(item.Id)}
-                    />
-                  );
-                })}
+              <View style={styles.tabContent}>
+                {tabLoading[activeTab as "movies" | "shows" | "docs"] ? (
+                  <ActivityIndicator color={mode.colors.accent} style={{ marginVertical: Spacing.xl }} />
+                ) : (tabItems[activeTab as "movies" | "shows" | "docs"] ?? []).length === 0 ? (
+                  <Text style={styles.empty}>
+                    {tabItems[activeTab as "movies" | "shows" | "docs"] === null
+                      ? "Loading..."
+                      : "Nothing found here yet."}
+                  </Text>
+                ) : (
+                  <View style={styles.contentGrid}>
+                    {(tabItems[activeTab as "movies" | "shows" | "docs"] ?? []).map((item) => (
+                      <ContentCard
+                        key={item.Id}
+                        item={item}
+                        accentColor={mode.colors.accent}
+                      />
+                    ))}
+                  </View>
+                )}
               </View>
             )}
           </Animated.View>
 
-          {/* Library shortcut */}
+          {/* Surprise Me — suggested tab only */}
+          {activeTab === "suggested" && (
           <TouchableOpacity
             style={styles.surpriseBtn}
             onPress={handleSurpriseMe}
@@ -253,6 +403,7 @@ export default function ModeScreen() {
               ⚡ Surprise Me
             </Text>
           </TouchableOpacity>
+          )}
 
           {/* Library shortcut */}
           <TouchableOpacity
@@ -421,6 +572,53 @@ const styles = StyleSheet.create({
     fontSize: 11,
     letterSpacing: 1.5,
     textTransform: "uppercase",
+  },
+
+  // ── Start Session ──────────────────────────────────────────────────
+  startBtn: { borderRadius: Radii.md, overflow: "hidden" },
+  startBtnGrad: {
+    paddingVertical: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  startBtnText: {
+    fontFamily: Typography.sansSemiBold,
+    fontSize: 17,
+    color: "#fff",
+    letterSpacing: 0.3,
+  },
+
+  // ── Tabs ───────────────────────────────────────────────────────────
+  tabBar: {
+    flexDirection: "row",
+    borderBottomWidth: 0.5,
+    borderBottomColor: "rgba(255,255,255,0.1)",
+    marginBottom: Spacing.xs,
+  },
+  tab: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: 10,
+    position: "relative",
+  },
+  tabText: {
+    fontFamily: Typography.sansMedium,
+    fontSize: 13,
+    color: Colors.textMuted,
+  },
+  tabIndicator: {
+    position: "absolute",
+    bottom: 0,
+    left: "15%",
+    right: "15%",
+    height: 2,
+    borderRadius: 1,
+  },
+  tabContent: { minHeight: 160 },
+  contentGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: Spacing.sm,
   },
 });
 
@@ -600,3 +798,83 @@ function SuggestionCard({
     </Animated.View>
   );
 }
+
+// ─── Content card (Movies / Shows / Docs tabs) ────────────────────────────────
+const CONTENT_CARD_W = Math.floor((width - Spacing.screen * 2 - Spacing.sm) / 2);
+
+function ContentCard({ item, accentColor }: { item: JellyfinItem; accentColor: string }) {
+  const { serverUrl } = useAuthStore();
+  const router = useRouter();
+  const imageUrl =
+    serverUrl && item.ImageTags?.Primary
+      ? getPrimaryImageUrl(serverUrl, item.Id, item.ImageTags.Primary, CONTENT_CARD_W * 2)
+      : undefined;
+
+  return (
+    <TouchableOpacity
+      style={[ccStyles.card, { width: CONTENT_CARD_W }]}
+      onPress={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        router.push({ pathname: "/player/[itemId]", params: { itemId: item.Id, itemName: item.Name ?? "" } });
+      }}
+      activeOpacity={0.84}
+    >
+      <View style={[ccStyles.poster, { height: CONTENT_CARD_W * 1.5 }]}>
+        {imageUrl ? (
+          <Image source={{ uri: imageUrl }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
+        ) : (
+          <View style={[StyleSheet.absoluteFill, ccStyles.noImage]}>
+            <Text style={ccStyles.noImageText}>{item.Name?.[0] ?? "?"}</Text>
+          </View>
+        )}
+        <LinearGradient
+          colors={["transparent", "rgba(10,10,12,0.85)"]}
+          style={ccStyles.posterGrad}
+          pointerEvents="none"
+        />
+      </View>
+      <View style={ccStyles.info}>
+        <Text style={ccStyles.title} numberOfLines={2}>{item.Name}</Text>
+        {item.ProductionYear ? (
+          <Text style={[ccStyles.year, { color: accentColor + "AA" }]}>{item.ProductionYear}</Text>
+        ) : null}
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+const ccStyles = StyleSheet.create({
+  card: {
+    borderRadius: Radii.md,
+    overflow: "hidden",
+    backgroundColor: Colors.surfaceRaised,
+    borderWidth: 0.5,
+    borderColor: Colors.surfaceBorder,
+  },
+  poster: { width: "100%", backgroundColor: Colors.surface },
+  noImage: {
+    backgroundColor: Colors.surfaceRaised,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  noImageText: {
+    color: Colors.textMuted,
+    fontSize: 28,
+    fontFamily: Typography.display,
+  },
+  posterGrad: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 60,
+  },
+  info: { padding: Spacing.sm, gap: 3 },
+  title: {
+    fontFamily: Typography.sansMedium,
+    fontSize: 12,
+    color: Colors.textPrimary,
+    lineHeight: 16,
+  },
+  year: { fontFamily: Typography.sans, fontSize: 11 },
+});

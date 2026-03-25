@@ -14,7 +14,9 @@ import type { Mode } from "@/constants/modes";
 import { Colors, Typography, Spacing, Radii } from "@/constants/theme";
 
 const { width } = Dimensions.get("window");
-const CARD_WIDTH = (width - Spacing.screen * 2 - Spacing.sm) / 2;
+const CARD_WIDTH = Math.floor((width - Spacing.screen * 2 - Spacing.sm) / 2);
+const HERO_WIDTH = width - Spacing.screen * 2;
+const COMPACT_WIDTH = Math.floor((width - Spacing.screen * 2 - Spacing.sm * 2) / 3);
 
 // Show the long-press hint only once per app session
 let _hintShown = false;
@@ -24,6 +26,7 @@ interface ModeCardProps {
   isRecent?: boolean;
   isRecommended?: boolean;
   enterDelay?: number;
+  size?: "hero" | "compact"; // default = normal two-column
   onQuickPlay?: (modeId: string) => void;
   /** Called on press — parent animates a color transition then calls navigate() */
   onTransition?: (color: string, navigate: () => void) => void;
@@ -34,12 +37,22 @@ export default function ModeCard({
   isRecent = false,
   isRecommended = false,
   enterDelay = 0,
+  size,
   onQuickPlay,
   onTransition,
 }: ModeCardProps) {
-  const router = useRouter();
+  const cardWidth =
+    size === "hero" ? HERO_WIDTH : size === "compact" ? COMPACT_WIDTH : CARD_WIDTH;
+  const minHeight =
+    size === "hero" ? 180 : size === "compact" ? 100 : 150;
+  const labelSize =
+    size === "hero" ? 22 : size === "compact" ? 15 : 20;
+  const iconSize =
+    size === "hero" ? 28 : size === "compact" ? 18 : 26;
+  const showTagline = size !== "compact";
+  const showHint = size !== "compact" && size !== "hero";
 
-  // Entrance
+  const router = useRouter();
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(16)).current;
 
@@ -75,7 +88,7 @@ export default function ModeCard({
   }, []);
 
   const handlePressIn = () =>
-    Animated.timing(scale, { toValue: 0.97, duration: 80, useNativeDriver: true }).start();
+    Animated.timing(scale, { toValue: size === "hero" ? 1.03 : 0.97, duration: 80, useNativeDriver: true }).start();
 
   const handlePressOut = () =>
     Animated.timing(scale, { toValue: 1, duration: 140, useNativeDriver: true }).start();
@@ -106,7 +119,7 @@ export default function ModeCard({
     <Animated.View
       style={[
         styles.wrapper,
-        { opacity, transform: [{ translateY }, { scale }] },
+        { width: cardWidth, opacity, transform: [{ translateY }, { scale }] },
       ]}
     >
       <TouchableOpacity
@@ -122,7 +135,7 @@ export default function ModeCard({
           colors={[`${mode.colors.base}EE`, `${mode.colors.base}88`, Colors.surface]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={styles.card}
+          style={[styles.card, { minHeight }]}
         >
           {/* Glow blob */}
           <View
@@ -131,7 +144,7 @@ export default function ModeCard({
           />
 
           {/* Recommended or Recent badge */}
-          {isRecommended ? (
+          {size !== "compact" && isRecommended ? (
             <View
               style={[
                 styles.badge,
@@ -145,7 +158,7 @@ export default function ModeCard({
                 ✶ Now
               </Text>
             </View>
-          ) : isRecent ? (
+          ) : size !== "compact" && isRecent ? (
             <View
               style={[
                 styles.badge,
@@ -162,15 +175,19 @@ export default function ModeCard({
           ) : null}
 
           {/* Icon */}
-          <Text style={[styles.icon, { color: mode.colors.accent }]}>{mode.icon}</Text>
+          <Text style={[styles.icon, { color: mode.colors.accent, fontSize: iconSize, lineHeight: iconSize + 4 }]}>{mode.icon}</Text>
 
           {/* Label */}
           <View style={styles.labelArea}>
-            <Text style={styles.label}>{mode.label}</Text>
-            <Text style={[styles.tagline, { color: mode.colors.textAccent }]}>
-              {mode.tagline}
-            </Text>
-            <Animated.Text style={[styles.holdHint, { opacity: hintOpacity }]}>Hold to play instantly</Animated.Text>
+            <Text style={[styles.label, { fontSize: labelSize }]}>{mode.label}</Text>
+            {showTagline && (
+              <Text style={[styles.tagline, { color: mode.colors.textAccent }]}>
+                {mode.tagline}
+              </Text>
+            )}
+            {showHint && (
+              <Animated.Text style={[styles.holdHint, { opacity: hintOpacity }]}>Hold to play instantly</Animated.Text>
+            )}
           </View>
         </LinearGradient>
       </TouchableOpacity>
@@ -180,7 +197,6 @@ export default function ModeCard({
 
 const styles = StyleSheet.create({
   wrapper: {
-    width: CARD_WIDTH,
     borderRadius: Radii.lg,
     shadowColor: "#000",
     shadowOpacity: 0.45,
@@ -195,7 +211,7 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: Radii.lg,
     padding: Spacing.md,
-    minHeight: 150,
+    minHeight: 150, // overridden inline per size
     justifyContent: "space-between",
     borderWidth: 0.5,
     borderColor: Colors.surfaceBorder,

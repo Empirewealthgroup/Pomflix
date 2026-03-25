@@ -16,7 +16,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useAuthStore } from "@/lib/store/authStore";
 import { authenticateUser } from "@/lib/jellyfin/auth";
-import { SERVER_URL, SIGNUP_API_URL } from "@/constants/config";
+import { SERVER_URL, SIGNUP_API_URL, SIGNUP_SECRET } from "@/constants/config";
 
 const { width } = Dimensions.get("window");
 const TOGGLE_PADDING = 4;
@@ -142,7 +142,10 @@ export default function LoginScreen() {
       try {
         const res = await fetch(`${SIGNUP_API_URL}/signup`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "x-pomflix-secret": SIGNUP_SECRET,
+          },
           body: JSON.stringify({
             name: fullName.trim(),
             email: email.trim(),

@@ -6,6 +6,7 @@ const KEY = "pom_onboarding_done";
 type OnboardingState = {
   hasSeen: boolean;
   markSeen: () => Promise<void>;
+  resetOnboarding: () => Promise<void>;
   loadOnboarding: () => Promise<void>;
 };
 
@@ -15,6 +16,11 @@ export const useOnboardingStore = create<OnboardingState>()((set) => ({
   markSeen: async () => {
     await SecureStore.setItemAsync(KEY, "1");
     set({ hasSeen: true });
+  },
+
+  resetOnboarding: async () => {
+    await SecureStore.deleteItemAsync(KEY);
+    set({ hasSeen: false });
   },
 
   loadOnboarding: async () => {

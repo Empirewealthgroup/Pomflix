@@ -20,30 +20,23 @@ export const Colors = {
 
   // ── Modes ──────────────────────────────────────────
   modes: {
-    focus: {
-      base: "#1B3A5C",
-      accent: "#4A90C4",
-      textAccent: "#7BB8E8",
-      glow: "rgba(27, 58, 92, 0.5)",
-    },
-    windDown: {
-      base: "#3D2B5E",
-      accent: "#9B7FD4",
-      textAccent: "#C4ADEE",
-      glow: "rgba(61, 43, 94, 0.5)",
-    },
-    energy: {
-      base: "#6B2A0E",
-      accent: "#E8703A",
-      textAccent: "#F5A07A",
-      glow: "rgba(196, 81, 26, 0.5)",
-    },
-    escape: {
-      base: "#5E2240",
-      accent: "#D47FAB",
-      textAccent: "#EAA8C8",
-      glow: "rgba(160, 68, 110, 0.5)",
-    },
+    // ── Calm States ──────────────────────────────────
+    wind_down: { base: "#3D2B5E", accent: "#9B7FD4", textAccent: "#C4ADEE", glow: "rgba(61,43,94,0.5)" },
+    calm:      { base: "#1E3A5F", accent: "#4A8FBF", textAccent: "#7CB8E0", glow: "rgba(30,58,95,0.5)" },
+    drift:     { base: "#1C2940", accent: "#4A6FA0", textAccent: "#7B9FC8", glow: "rgba(28,41,64,0.5)" },
+    // ── Focus States ─────────────────────────────────
+    focus:     { base: "#1B3A5C", accent: "#4A90C4", textAccent: "#7BB8E8", glow: "rgba(27,58,92,0.5)" },
+    deep_work: { base: "#1E3D3F", accent: "#3A9DA8", textAccent: "#6FCBD4", glow: "rgba(30,61,63,0.5)" },
+    locked_in: { base: "#5C2E00", accent: "#E07030", textAccent: "#F5A070", glow: "rgba(92,46,0,0.5)" },
+    // ── Emotional States ─────────────────────────────
+    escape:    { base: "#5E2240", accent: "#D47FAB", textAccent: "#EAA8C8", glow: "rgba(160,68,110,0.5)" },
+    laugh:     { base: "#5C3200", accent: "#E8903A", textAccent: "#F5B47A", glow: "rgba(92,50,0,0.5)" },
+    reflect:   { base: "#2A2E3D", accent: "#7B8CB0", textAccent: "#A8B5CC", glow: "rgba(42,46,61,0.5)" },
+    explore:   { base: "#0F3835", accent: "#2AB09A", textAccent: "#6AD4C0", glow: "rgba(15,56,53,0.5)" },
+    intimate:  { base: "#3D1028", accent: "#C05080", textAccent: "#E08AAA", glow: "rgba(61,16,40,0.5)" },
+    // ── Legacy (kept for backward compat) ────────────
+    windDown:  { base: "#3D2B5E", accent: "#9B7FD4", textAccent: "#C4ADEE", glow: "rgba(61,43,94,0.5)" },
+    energy:    { base: "#6B2A0E", accent: "#E8703A", textAccent: "#F5A07A", glow: "rgba(196,81,26,0.5)" },
   },
 } as const;
 

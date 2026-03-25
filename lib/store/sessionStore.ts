@@ -3,7 +3,9 @@ import * as SecureStore from "expo-secure-store";
 import type { ModeId } from "@/constants/modes";
 
 const SESSION_KEY = "pom_session";
+const RECENT_MOODS_KEY = "pom_recent_moods";
 const SESSION_TTL_MS = 24 * 60 * 60 * 1_000; // 24 hours
+const MAX_RECENT_MOODS = 6;
 
 export type ActiveSession = {
   modeId: ModeId;
@@ -18,12 +20,15 @@ export type ActiveSession = {
 
 type SessionState = {
   currentSession: ActiveSession | null;
+  recentMoodIds: ModeId[];
   startSession: (
     modeId: ModeId,
     modeLabel: string,
     modeIcon: string,
     modeColor: string
   ) => Promise<void>;
+  addRecentMoodId: (moodId: ModeId) => Promise<void>;
+  clearRecentMoods: () => Promise<void>;
   updateSessionItem: (
     itemId: string,
     itemName: string,
@@ -35,6 +40,14 @@ type SessionState = {
 
 export const useSessionStore = create<SessionState>((set, get) => ({
   currentSession: null,
+  recentMoodIds: [],
+
+  addRecentMoodId: async (moodId) => {
+    const existing = get().recentMoodIds.filter((id) => id !== moodId);
+    const updated = [moodId, ...existing].slice(0, MAX_RECENT_MOODS);
+    set({ recentMoodIds: updated });
+    await SecureStore.setItemAsync(RECENT_MOODS_KEY, JSON.stringify(updated));
+  },
 
   startSession: async (modeId, modeLabel, modeIcon, modeColor) => {
     // Keep lastItem if re-entering the same mode within the TTL
@@ -59,6 +72,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     await SecureStore.setItemAsync(SESSION_KEY, JSON.stringify(session));
   },
 
+  clearRecentMoods: async () => {
+    set({ recentMoodIds: [] });
+    await SecureStore.deleteItemAsync(RECENT_MOODS_KEY);
+  },
+
   updateSessionItem: async (itemId, itemName, progress) => {
     const current = get().currentSession;
     if (!current) return;
@@ -81,9 +99,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   loadStoredSession: async () => {
     try {
-      const raw = await SecureStore.getItemAsync(SESSION_KEY);
-      if (!raw) return;
-      const session: ActiveSession = JSON.parse(raw);
+      const [sessionRaw, recentRaw] = await Promise.all([
+        SecureStore.getItemAsync(SESSION_KEY),
+        SecureStore.getItemAsync(RECENT_MOODS_KEY),
+      ]);
+
+      if (recentRaw) {
+        const parsed = JSON.parse(recentRaw) as ModeId[];
+        set({ recentMoodIds: parsed });
+      }
+
+      if (!sessionRaw) return;
+      const session: ActiveSession = JSON.parse(sessionRaw);
       // Auto-expire sessions older than TTL
       if (Date.now() - session.startTime > SESSION_TTL_MS) {
         await SecureStore.deleteItemAsync(SESSION_KEY);

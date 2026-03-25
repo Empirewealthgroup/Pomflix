@@ -215,15 +215,17 @@ export default function LibraryScreen() {
   const [recentItems, setRecentItems] = useState<JellyfinItem[]>([]);
   const [shelves, setShelves] = useState<{ mode: Mode; items: JellyfinItem[] }[]>([]);
   const [shelvesLoading, setShelvesLoading] = useState(true);
+  const [shelvesError, setShelvesError] = useState(false);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isSearching = searchText.length > 0;
 
   // Load all shelves once on mount
-  useEffect(() => {
+  const loadShelves = () => {
     if (!serverUrl || !token || !userId) return;
     setShelvesLoading(true);
+    setShelvesError(false);
     Promise.all([
       getRecentlyAdded(serverUrl, token, userId, 14),
       ...MODES.map((m) => getSuggestionsForMode(serverUrl, token, userId, m, 10)),
@@ -234,9 +236,12 @@ export default function LibraryScreen() {
           MODES.map((m, i) => ({ mode: m, items: modeItems[i] as JellyfinItem[] }))
         );
       })
-      .catch(() => {})
+      .catch(() => setShelvesError(true))
       .finally(() => setShelvesLoading(false));
-  }, [serverUrl, token, userId]);
+  };
+
+  // Load all shelves once on mount
+  useEffect(() => { loadShelves(); }, [serverUrl, token, userId]);
 
   // Debounced search (300 ms)
   const handleSearchChange = (text: string) => {
@@ -367,6 +372,16 @@ export default function LibraryScreen() {
                   <SkeletonCard key={i} size="small" />
                 ))}
               </View>
+            ) : shelvesError ? (
+              <TouchableOpacity
+                onPress={loadShelves}
+                style={{ paddingVertical: Spacing.md }}
+                activeOpacity={0.7}
+              >
+                <Text style={[shelfStyles.shelfLabel, { color: Colors.textMuted, fontFamily: Typography.sans }]}>
+                  Could not load — tap to retry
+                </Text>
+              </TouchableOpacity>
             ) : (
               <FlatList
                 data={recentItems}

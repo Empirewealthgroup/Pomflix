@@ -55,8 +55,11 @@ export async function getSuggestionsForMode(
   token: string,
   userId: string,
   mode: Mode,
-  limit = 5
+  limit = 5,
+  maxRuntimeOverride: number | null = null
 ): Promise<JellyfinItem[]> {
+  const maxRuntime = maxRuntimeOverride ?? mode.maxRuntimeMinutes ?? null;
+  const runtimeTicks = maxRuntime ? maxRuntime * 60 * 10_000_000 : null;
   const res = await jellyfinFetch<JellyfinItemsResponse>(
     serverUrl,
     `/Users/${userId}/Items`,
@@ -72,15 +75,35 @@ export async function getSuggestionsForMode(
         Fields: FIELDS,
         IsPlayed: false,
         EnableImageTypes: "Primary,Backdrop",
-        ...(mode.maxRuntimeMinutes
-          ? { MaxOfficialRating: "PG-13", MaxRunTimeTicks: mode.maxRuntimeMinutes * 60 * 10_000_000 }
-          : {}),
+        ...(runtimeTicks ? { MaxRunTimeTicks: runtimeTicks } : {}),
       },
     }
   );
 
-  // Fallback: if genre filter returns nothing, drop the genre filter
+  // Fallback stage 2: try mood's fallback genres
   if (!res.Items?.length) {
+    const stage2 = await jellyfinFetch<JellyfinItemsResponse>(
+      serverUrl,
+      `/Users/${userId}/Items`,
+      {
+        token,
+        params: {
+          IncludeItemTypes: "Movie,Series",
+          Recursive: true,
+          SortBy: "Random",
+          SortOrder: "Ascending",
+          Genres: mode.jellyfinGenresFallback.join("|"),
+          Limit: limit,
+          Fields: FIELDS,
+          IsPlayed: false,
+          EnableImageTypes: "Primary,Backdrop",
+          ...(runtimeTicks ? { MaxRunTimeTicks: runtimeTicks } : {}),
+        },
+      }
+    );
+    if (stage2.Items?.length) return stage2.Items;
+
+    // Fallback stage 3: drop all genre filters
     const fallback = await jellyfinFetch<JellyfinItemsResponse>(
       serverUrl,
       `/Users/${userId}/Items`,
@@ -93,6 +116,7 @@ export async function getSuggestionsForMode(
           Limit: limit,
           Fields: FIELDS,
           EnableImageTypes: "Primary,Backdrop",
+          ...(runtimeTicks ? { MaxRunTimeTicks: runtimeTicks } : {}),
         },
       }
     );
@@ -100,6 +124,66 @@ export async function getSuggestionsForMode(
   }
 
   return res.Items;
+}
+
+// ── Tab-specific content (Movies / Shows / Docs) ─────────────────────────
+
+type ModeTab = "movies" | "shows" | "docs";
+
+export async function getContentForModeTab(
+  serverUrl: string,
+  token: string,
+  userId: string,
+  mode: Mode,
+  tab: ModeTab,
+  limit = 24
+): Promise<JellyfinItem[]> {
+  const itemType = tab === "shows" ? "Series" : "Movie";
+
+  // Docs: always Documentary genre only
+  // Movies/Shows: use mood genres minus Documentary
+  const genres =
+    tab === "docs"
+      ? ["Documentary"]
+      : mode.jellyfinGenres.filter((g) => g !== "Documentary");
+
+  const fetchItems = async (genreList: string[]): Promise<JellyfinItem[]> => {
+    const res = await jellyfinFetch<JellyfinItemsResponse>(
+      serverUrl,
+      `/Users/${userId}/Items`,
+      {
+        token,
+        params: {
+          IncludeItemTypes: itemType,
+          Recursive: true,
+          SortBy: "Random",
+          SortOrder: "Ascending",
+          ...(genreList.length ? { Genres: genreList.join("|") } : {}),
+          Limit: limit,
+          Fields: FIELDS,
+          IsPlayed: false,
+          EnableImageTypes: "Primary,Backdrop",
+          ...(mode.maxRuntimeMinutes && tab !== "shows"
+            ? { MaxRunTimeTicks: mode.maxRuntimeMinutes * 60 * 10_000_000 }
+            : {}),
+        },
+      }
+    );
+    return res.Items ?? [];
+  };
+
+  // Stage 1: primary genres
+  let items = await fetchItems(genres);
+  if (items.length) return items;
+
+  // Stage 2: fallback genres
+  const fallbackGenres =
+    tab === "docs" ? [] : mode.jellyfinGenresFallback.filter((g) => g !== "Documentary");
+  items = await fetchItems(fallbackGenres);
+  if (items.length) return items;
+
+  // Stage 3: no genre filter at all
+  return fetchItems([]);
 }
 
 // ── Full Library ──────────────────────────────────────────────────────────

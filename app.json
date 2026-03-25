@@ -4,7 +4,7 @@
     "slug": "pomflix",
     "version": "1.0.0",
     "scheme": "pomflix",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "splash": {
@@ -28,6 +28,7 @@
     },
     "plugins": [
       "expo-router",
+      "expo-screen-orientation",
       "expo-video",
       "expo-secure-store",
       "expo-font"

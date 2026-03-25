@@ -18,31 +18,57 @@ import { useSessionStore } from "@/lib/store/sessionStore";
 import type { ActiveSession } from "@/lib/store/sessionStore";
 import { useOnboardingStore } from "@/lib/store/onboardingStore";
 import { getContinueWatching, getPrimaryImageUrl } from "@/lib/jellyfin/media";
-import { MODES, type ModeId } from "@/constants/modes";
+import { MODES, getModeById, type ModeId } from "@/constants/modes";
 import { Colors, Typography, Spacing, Radii } from "@/constants/theme";
 import ModeCard from "@/components/ModeCard";
 import { SkeletonRow } from "@/components/SkeletonCard";
+import { useSettingsStore } from "@/lib/store/settingsStore";
 import type { JellyfinItem } from "@/lib/jellyfin/types";
 
 // ─── Session-persisted last-used mode ────────────────────────────────────────
 let _lastUsedModeId: string | null = null;
 
+// ─── Avatar color derived from userId ────────────────────────────────────────
+const AVATAR_PALETTE = ["#8B1A2E", "#4A90C4", "#9B7FD4", "#2AB09A", "#E07030", "#C05080"];
+function avatarColor(userId: string | null): string {
+  if (!userId) return AVATAR_PALETTE[0];
+  let h = 0;
+  for (let i = 0; i < userId.length; i++) h = userId.charCodeAt(i) + ((h << 5) - h);
+  return AVATAR_PALETTE[Math.abs(h) % AVATAR_PALETTE.length];
+}
+
 // ─── Contextual greeting ──────────────────────────────────────────────────────
 function getGreeting(): { headline: string; subline: (n: string) => string } {
   const h = new Date().getHours();
-  if (h < 5) return { headline: "Still up?", subline: (n) => `Night owl mode, ${n}.` };
-  if (h < 12) return { headline: "Start your day right.", subline: (n) => `Good morning, ${n}.` };
-  if (h < 17) return { headline: "Good afternoon.", subline: (n) => `Take a break, ${n}.` };
-  if (h < 21) return { headline: "Good evening.", subline: (n) => `What's the mood, ${n}?` };
-  return { headline: "Winding down?", subline: (n) => `Good night, ${n}.` };
+  if (h < 5)  return { headline: "Still up?",            subline: (n) => `Night owl mode, ${n}.` };
+  if (h < 9)  return { headline: "Ease into your day.",  subline: (n) => `Good morning, ${n}.` };
+  if (h < 12) return { headline: "Good morning.",        subline: (n) => `How are we feeling, ${n}?` };
+  if (h < 14) return { headline: "Midday break?",        subline: (n) => `Take a moment, ${n}.` };
+  if (h < 17) return { headline: "Good afternoon.",      subline: (n) => `What's on your mind, ${n}?` };
+  if (h < 21) return { headline: "Good evening.",        subline: (n) => `What's the mood, ${n}?` };
+  if (h < 23) return { headline: "Winding down.",        subline: (n) => `One more, ${n}?` };
+  return      { headline: "Late night.",                 subline: (n) => `Still here, ${n}.` };
 }
-// ─── Adaptive time-of-day context ──────────────────────────────────────────
-function getTimeContext(): { glowColor: string; recommendedModeId: ModeId } {
+// ─── Time-aware session banner copy ──────────────────────────────────────────
+function getSessionBannerCopy(modeLabel: string, elapsedLabel: string): string {
   const h = new Date().getHours();
-  if (h >= 6 && h < 11) return { glowColor: "#C47A2A", recommendedModeId: "energy" };
-  if (h >= 11 && h < 17) return { glowColor: "#1B3A5C", recommendedModeId: "focus" };
-  if (h >= 17 && h < 21) return { glowColor: "#3D2B5E", recommendedModeId: "wind-down" };
-  return { glowColor: "#5E2240", recommendedModeId: "escape" };
+  if (h < 5)  return `Still up? Let’s finish this  ·  ${elapsedLabel}`;
+  if (h < 12) return `Good morning — continue your ${modeLabel}  ·  ${elapsedLabel}`;
+  if (h < 17) return `Good time for a break  ·  ${elapsedLabel}`;
+  if (h < 21) return `Continue your ${modeLabel}  ·  ${elapsedLabel}`;
+  return `One more before sleep? ${modeLabel}  ·  ${elapsedLabel}`;
+}
+// ─── Adaptive time-of-day mood recommendations ───────────────────────────────
+type TimeMoods = { glowColor: string; heroMoodId: ModeId; supportMoodIds: ModeId[] };
+function getTimeMoods(): TimeMoods {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 11)
+    return { glowColor: "#4A90C4", heroMoodId: "focus", supportMoodIds: ["deep_work", "locked_in", "explore"] };
+  if (h >= 11 && h < 17)
+    return { glowColor: "#E07030", heroMoodId: "locked_in", supportMoodIds: ["focus", "laugh", "explore"] };
+  if (h >= 17 && h < 22)
+    return { glowColor: "#9B7FD4", heroMoodId: "wind_down", supportMoodIds: ["calm", "intimate", "escape"] };
+  return { glowColor: "#4A6FA0", heroMoodId: "drift", supportMoodIds: ["calm", "reflect", "wind_down"] };
 }
 // ─── Continue watching card ───────────────────────────────────────────────────
 function ContinueCard({ item }: { item: JellyfinItem }) {
@@ -56,6 +82,11 @@ function ContinueCard({ item }: { item: JellyfinItem }) {
       : undefined;
 
   const progress = item.UserData?.PlayedPercentage ?? 0;
+  const timeLeft = (() => {
+    if (!item.RunTimeTicks || progress <= 0) return null;
+    const remaining = Math.round((item.RunTimeTicks / 600_000_000) * (1 - progress / 100));
+    return remaining > 0 ? remaining : null;
+  })();
 
   return (
     <TouchableOpacity
@@ -83,16 +114,18 @@ function ContinueCard({ item }: { item: JellyfinItem }) {
         )}
 
         <LinearGradient
-          colors={["transparent", "rgba(5,5,7,0.96)"]}
+          colors={["transparent", "rgba(5,5,7,0.98)"]}
           style={cwStyles.overlay}
         >
           <Text style={cwStyles.title} numberOfLines={1}>{item.Name}</Text>
+          {timeLeft !== null && (
+            <Text style={cwStyles.timeLeft}>{timeLeft} min left</Text>
+          )}
           {progress > 0 && (
             <View style={cwStyles.progressRow}>
               <View style={cwStyles.progressTrack}>
                 <View style={[cwStyles.progressFill, { width: `${progress}%` as any }]} />
               </View>
-              <Text style={cwStyles.progressPct}>{Math.round(progress)}%</Text>
             </View>
           )}
         </LinearGradient>
@@ -120,6 +153,7 @@ function SessionBanner({
     elapsed < 1 ? "just now" :
     elapsed < 60 ? `${elapsed}m ago` :
     `${Math.floor(elapsed / 60)}h ${elapsed % 60}m ago`;
+  const bannerCopy = getSessionBannerCopy(session.modeLabel, elapsedLabel);
   return (
     <TouchableOpacity onPress={onContinue} activeOpacity={0.88} style={[sbStyles.card, { borderColor: `${session.modeColor}55` }]}>
       <LinearGradient
@@ -133,7 +167,7 @@ function SessionBanner({
         <Text style={[sbStyles.icon, { color: session.modeColor }]}>{session.modeIcon}</Text>
         <View style={sbStyles.textCol}>
           <Text style={sbStyles.label}>
-            Continue your {session.modeLabel}  ·  {elapsedLabel}
+            {bannerCopy}
           </Text>
           {session.lastItemName ? (
             <View style={sbStyles.itemRow}>
@@ -161,16 +195,49 @@ function SessionBanner({
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { serverUrl, token, userId, userName, logout, isNewLogin, clearNewLogin } = useAuthStore();
+  const { serverUrl, token, userId, userName, isNewLogin, clearNewLogin } = useAuthStore();
   const { currentSession, clearSession, loadStoredSession } = useSessionStore();
   const { hasSeen, markSeen, loadOnboarding } = useOnboardingStore();
+  const { prefs, loadPrefs } = useSettingsStore();
   const [continueItems, setContinueItems] = useState<JellyfinItem[]>([]);
   const [loadingContinue, setLoadingContinue] = useState(true);
+  const [continueError, setContinueError] = useState(false);
   const [lastUsedModeId, setLastUsedModeId] = useState<string | null>(_lastUsedModeId);
   const [showOnboarding, setShowOnboarding] = useState(false);
 
-  // Adaptive time context
-  const { glowColor, recommendedModeId } = getTimeContext();
+  // Mood layout: pinned overrides time-based hero/support
+  const timeMoods = getTimeMoods();
+  const visibleModes = MODES.filter((m) => !prefs.hiddenMoodIds.includes(m.id));
+  const glowColor = (() => {
+    if (prefs.pinnedMoodIds.length > 0) {
+      const pinned = getModeById(prefs.pinnedMoodIds[0]);
+      return pinned ? pinned.colors.base : timeMoods.glowColor;
+    }
+    return timeMoods.glowColor;
+  })();
+  const heroMood = (() => {
+    if (prefs.pinnedMoodIds.length > 0) {
+      const pinned = visibleModes.find((m) => m.id === prefs.pinnedMoodIds[0]);
+      if (pinned) return pinned;
+    }
+    return visibleModes.find((m) => m.id === timeMoods.heroMoodId) ?? visibleModes[0];
+  })();
+  const supportMoods = (() => {
+    if (prefs.pinnedMoodIds.length > 1) {
+      // Use remaining pinned moods as support, fill up to 3 with time-based
+      const pinnedSupport = prefs.pinnedMoodIds
+        .slice(1)
+        .map((id) => visibleModes.find((m) => m.id === id))
+        .filter(Boolean) as typeof MODES;
+      const timeFill = timeMoods.supportMoodIds
+        .map((id) => getModeById(id))
+        .filter((m) => m && !prefs.pinnedMoodIds.includes(m.id) && !prefs.hiddenMoodIds.includes(m.id)) as typeof MODES;
+      return [...pinnedSupport, ...timeFill].slice(0, 3);
+    }
+    return timeMoods.supportMoodIds
+      .map((id) => getModeById(id))
+      .filter((m) => m && !prefs.hiddenMoodIds.includes(m.id)) as typeof MODES;
+  })();
 
   // Color-morph transition overlay
   const [overlayColor, setOverlayColor] = useState("#000");
@@ -183,6 +250,10 @@ export default function HomeScreen() {
   // Onboarding overlay
   const onboardingSlideAnim = useRef(new Animated.Value(60)).current;
   const onboardingFadeAnim = useRef(new Animated.Value(0)).current;
+
+  // Living background pulse — two offset loops
+  const glowPulse1 = useRef(new Animated.Value(0)).current;
+  const glowPulse2 = useRef(new Animated.Value(0)).current;
 
   // Keep a ref to latest hasSeen so the welcome timeout can read it fresh
   const hasSeenRef = useRef(hasSeen);
@@ -259,13 +330,36 @@ export default function HomeScreen() {
   }, []);
 
   useEffect(() => { loadStoredSession(); loadOnboarding(); }, []);
+  useEffect(() => { if (userId) loadPrefs(userId); }, [userId]);
+
+  useEffect(() => {
+    const anim1 = Animated.loop(
+      Animated.sequence([
+        Animated.timing(glowPulse1, { toValue: 1, duration: 2200, useNativeDriver: true }),
+        Animated.timing(glowPulse1, { toValue: 0, duration: 2200, useNativeDriver: true }),
+      ])
+    );
+    anim1.start();
+    let anim2: ReturnType<typeof Animated.loop> | null = null;
+    const t = setTimeout(() => {
+      anim2 = Animated.loop(
+        Animated.sequence([
+          Animated.timing(glowPulse2, { toValue: 1, duration: 1700, useNativeDriver: true }),
+          Animated.timing(glowPulse2, { toValue: 0, duration: 1700, useNativeDriver: true }),
+        ])
+      );
+      anim2.start();
+    }, 1100);
+    return () => { clearTimeout(t); anim1.stop(); anim2?.stop(); };
+  }, []);
 
   useEffect(() => {
     if (!serverUrl || !token || !userId) return;
     setLoadingContinue(true);
+    setContinueError(false);
     getContinueWatching(serverUrl, token, userId, 8)
       .then(setContinueItems)
-      .catch(() => {})
+      .catch(() => setContinueError(true))
       .finally(() => setLoadingContinue(false));
   }, [serverUrl, token, userId]);
 
@@ -278,13 +372,26 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      {/* ─── Adaptive background glow ─── */}
-      <View
+      {/* ─── Living background glow ─── */}
+      <Animated.View
         pointerEvents="none"
         style={[
           StyleSheet.absoluteFill,
           styles.adaptiveGlow,
-          { backgroundColor: glowColor },
+          {
+            backgroundColor: glowColor,
+            opacity: glowPulse1.interpolate({ inputRange: [0, 1], outputRange: [0.06, 0.16] }),
+          },
+        ]}
+      />
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.adaptiveGlowSecondary,
+          {
+            backgroundColor: glowColor,
+            opacity: glowPulse2.interpolate({ inputRange: [0, 1], outputRange: [0.03, 0.09] }),
+          },
         ]}
       />
       <ScrollView
@@ -318,11 +425,14 @@ export default function HomeScreen() {
           <TouchableOpacity
             onPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              logout();
+              router.push("/settings");
             }}
-            style={styles.logoutBtn}
+            style={styles.avatarBtn}
+            hitSlop={8}
           >
-            <Text style={styles.logoutText}>Sign Out</Text>
+            <View style={[styles.avatar, { backgroundColor: avatarColor(userId) }]}>
+              <Text style={styles.avatarText}>{userName?.[0]?.toUpperCase() ?? "?"}</Text>
+            </View>
           </TouchableOpacity>
         </Animated.View>
 
@@ -344,27 +454,64 @@ export default function HomeScreen() {
               }}
             />
           )}
-          <View style={styles.modeGrid}>
-            {MODES.map((mode, index) => (
-              <ModeCard
-                key={mode.id}
-                mode={mode}
-                isRecent={mode.id === lastUsedModeId}
-                isRecommended={mode.id === recommendedModeId}
-                enterDelay={200 + index * 70}
-                onQuickPlay={handleQuickPlay}
-                onTransition={handleModeTransition}
-              />
-            ))}
+          <View style={styles.moodGrid}>
+            {/* Hero mood — full width */}
+            <ModeCard
+              mode={heroMood}
+              isRecommended
+              size="hero"
+              enterDelay={200}
+              onQuickPlay={handleQuickPlay}
+              onTransition={handleModeTransition}
+            />
+            {/* Support moods — 3-column compact row */}
+            <View style={styles.supportRow}>
+              {supportMoods.map((mode, index) => (
+                <ModeCard
+                  key={mode.id}
+                  mode={mode}
+                  isRecent={mode.id === lastUsedModeId}
+                  size="compact"
+                  enterDelay={300 + index * 60}
+                  onQuickPlay={handleQuickPlay}
+                  onTransition={handleModeTransition}
+                />
+              ))}
+            </View>
+            {/* View all moods */}
+            <TouchableOpacity
+              onPress={() => router.push("/moods")}
+              style={styles.viewAllLink}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.viewAllText}>View all moods →</Text>
+            </TouchableOpacity>
           </View>
         </Animated.View>
 
         {/* ─── Continue Watching ──────────────────────────────────────── */}
-        {(loadingContinue || continueItems.length > 0) && (
+        {(loadingContinue || continueItems.length > 0 || continueError) && (
           <Animated.View style={[styles.section, { opacity: sectionAnim }]}>
             <Text style={styles.sectionTitle}>Continue Watching</Text>
             {loadingContinue ? (
               <SkeletonRow count={3} size="medium" />
+            ) : continueError ? (
+              <TouchableOpacity
+                onPress={() => {
+                  setContinueError(false);
+                  setLoadingContinue(true);
+                  getContinueWatching(serverUrl!, token!, userId!, 8)
+                    .then(setContinueItems)
+                    .catch(() => setContinueError(true))
+                    .finally(() => setLoadingContinue(false));
+                }}
+                style={{ paddingVertical: 12 }}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.sectionTitle, { fontSize: 13, color: Colors.textMuted }]}>
+                  Could not load — tap to retry
+                </Text>
+              </TouchableOpacity>
             ) : (
               <FlatList
                 data={continueItems}
@@ -452,12 +599,20 @@ const styles = StyleSheet.create({
     gap: Spacing.lg,
   },
 
-  // Subtle adaptive glow — 8% opacity, lives behind all content
+  // Primary living glow — opacity driven by glowPulse1 via inline style
   adaptiveGlow: {
-    opacity: 0.08,
     top: 0,
-    height: 320,
+    height: 420,
     bottom: undefined,
+  },
+  // Secondary radial blob — offset position + timing
+  adaptiveGlowSecondary: {
+    position: "absolute",
+    top: 200,
+    right: -80,
+    width: 300,
+    height: 300,
+    borderRadius: 150,
   },
 
   header: {
@@ -479,11 +634,18 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     marginTop: 1,
   },
-  logoutBtn: { paddingBottom: 4, paddingLeft: 12 },
-  logoutText: {
-    fontFamily: Typography.sans,
-    fontSize: 13,
-    color: Colors.textMuted,
+  avatarBtn: { paddingBottom: 2, paddingLeft: 12 },
+  avatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: {
+    fontFamily: Typography.sansSemiBold,
+    fontSize: 14,
+    color: "#fff",
   },
 
   section: { gap: Spacing.md },
@@ -495,10 +657,23 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
 
-  modeGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
+  moodGrid: {
     gap: Spacing.sm,
+  },
+  supportRow: {
+    flexDirection: "row",
+    gap: Spacing.sm,
+  },
+  viewAllLink: {
+    alignSelf: "center",
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  viewAllText: {
+    fontFamily: Typography.sans,
+    fontSize: 13,
+    color: Colors.textMuted,
+    letterSpacing: 0.3,
   },
 
   rowContent: { paddingBottom: 4 },
@@ -587,7 +762,7 @@ const styles = StyleSheet.create({
 const cwStyles = StyleSheet.create({
   card: {
     width: 160,
-    height: 240,
+    height: 260,
     borderRadius: Radii.md,
     overflow: "hidden",
     backgroundColor: Colors.surfaceRaised,
@@ -608,11 +783,11 @@ const cwStyles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: 90,
+    height: 110,
     justifyContent: "flex-end",
     paddingHorizontal: 10,
-    paddingBottom: 10,
-    gap: 6,
+    paddingBottom: 12,
+    gap: 4,
   },
   title: {
     fontFamily: Typography.sansMedium,
@@ -627,20 +802,21 @@ const cwStyles = StyleSheet.create({
   },
   progressTrack: {
     flex: 1,
-    height: 2.5,
-    backgroundColor: "rgba(255,255,255,0.14)",
+    height: 4,
+    backgroundColor: "rgba(255,255,255,0.12)",
     borderRadius: 2,
     overflow: "hidden",
   },
   progressFill: {
-    height: 2.5,
-    backgroundColor: Colors.textPrimary,
+    height: 4,
+    backgroundColor: Colors.brand,
     borderRadius: 2,
   },
-  progressPct: {
+  timeLeft: {
     fontFamily: Typography.sans,
-    fontSize: 10,
+    fontSize: 11,
     color: Colors.textSecondary,
+    lineHeight: 14,
   },
   resumeBadge: {
     position: "absolute",

@@ -1,4 +1,6 @@
 // Jellyfin Base HTTP Client
+import { router } from "expo-router";
+import { useAuthStore } from "@/lib/store/authStore";
 
 const CLIENT_NAME = "Pomflix";
 const CLIENT_VERSION = "1.0.0";
@@ -46,6 +48,14 @@ export async function jellyfinFetch<T>(
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
+
+  if (response.status === 401) {
+    // Session expired or revoked — clear credentials and redirect to login
+    useAuthStore.getState().logout().then(() => {
+      router.replace("/(auth)/login");
+    });
+    throw new Error("Session expired. Please log in again.");
+  }
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");

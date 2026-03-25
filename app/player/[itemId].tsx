@@ -10,7 +10,8 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import { VideoView, useVideoPlayer } from "expo-video";
+import { VideoView, useVideoPlayer, type AudioTrack, type SubtitleTrack } from "expo-video";
+import * as ScreenOrientation from "expo-screen-orientation";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuthStore } from "@/lib/store/authStore";
@@ -46,6 +47,16 @@ export default function PlayerScreen() {
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [showControls, setShowControls] = useState(true);
   const [showMoodCheck, setShowMoodCheck] = useState(false);
+
+  // Track picker
+  const [audioTracks, setAudioTracks] = useState<AudioTrack[]>([]);
+  const [subtitleTracks, setSubtitleTracks] = useState<SubtitleTrack[]>([]);
+  const [currentAudioTrack, setCurrentAudioTrack] = useState<AudioTrack | null>(null);
+  const [currentSubtitleTrack, setCurrentSubtitleTrack] = useState<SubtitleTrack | null>(null);
+  const [trackSheet, setTrackSheet] = useState<"audio" | "subtitle" | null>(null);
+  const [showOptionsSheet, setShowOptionsSheet] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2];
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Mood check animations
@@ -189,6 +200,40 @@ export default function PlayerScreen() {
     }, PROGRESS_INTERVAL_MS);
     return () => { if (progressTimer.current) clearInterval(progressTimer.current); };
   }, [streamUrl]);
+
+  // Lock to landscape on mount, restore portrait on unmount
+  useEffect(() => {
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+    return () => {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+    };
+  }, []);
+
+  // Subscribe to audio/subtitle track events
+  useEffect(() => {
+    const subs = [
+      // Seed initial values when source loads (player props are readable synchronously)
+      player.addListener("sourceLoad", () => {
+        setAudioTracks(player.availableAudioTracks ?? []);
+        setSubtitleTracks(player.availableSubtitleTracks ?? []);
+        setCurrentAudioTrack(player.audioTrack ?? null);
+        setCurrentSubtitleTrack(player.subtitleTrack ?? null);
+      }),
+      player.addListener("availableAudioTracksChange", ({ availableAudioTracks }) => {
+        setAudioTracks(availableAudioTracks);
+      }),
+      player.addListener("audioTrackChange", ({ audioTrack }) => {
+        setCurrentAudioTrack(audioTrack);
+      }),
+      player.addListener("availableSubtitleTracksChange", ({ availableSubtitleTracks }) => {
+        setSubtitleTracks(availableSubtitleTracks);
+      }),
+      player.addListener("subtitleTrackChange", ({ subtitleTrack }) => {
+        setCurrentSubtitleTrack(subtitleTrack);
+      }),
+    ];
+    return () => subs.forEach((s) => s.remove());
+  }, [player]);
 
   const stopAndReport = () => {
     if (progressTimer.current) clearInterval(progressTimer.current);
@@ -366,10 +411,102 @@ export default function PlayerScreen() {
                 <Text style={styles.closeIcon}>✕</Text>
                 <Text style={styles.closeLabel}>Close</Text>
               </TouchableOpacity>
+
+              {/* Options pill — speed, audio, subtitles */}
+              <TouchableOpacity
+                style={styles.optionsBtn}
+                onPress={() => {
+                  if (hideTimer.current) clearTimeout(hideTimer.current);
+                  setShowOptionsSheet(true);
+                }}
+                hitSlop={12}
+              >
+                <Text style={styles.optionsBtnText}>⋯</Text>
+              </TouchableOpacity>
             </Animated.View>
           )}
         </>
       )}
+
+      {/* ── Playback Options Sheet (speed + audio + subtitles) ────── */}
+      {showOptionsSheet && (
+        <TouchableOpacity
+          style={styles.trackBackdrop}
+          activeOpacity={1}
+          onPress={() => { setShowOptionsSheet(false); setTrackSheet(null); }}
+        >
+          <TouchableOpacity style={styles.trackSheetContainer} activeOpacity={1} onPress={() => {}}>
+            <View style={styles.trackSheetHandle} />
+
+            {/* ─ Speed ─ */}
+            {trackSheet === null && (
+              <>
+                <Text style={styles.trackSheetTitle}>Playback Options</Text>
+
+                <Text style={styles.optionSectionLabel}>Speed</Text>
+                <View style={styles.speedRow}>
+                  {SPEED_OPTIONS.map((s) => (
+                    <TouchableOpacity
+                      key={`speed-${s}`}
+                      style={[styles.speedChip, playbackSpeed === s && styles.speedChipActive]}
+                      onPress={() => {
+                        player.playbackRate = s;
+                        setPlaybackSpeed(s);
+                      }}
+                    >
+                      <Text style={[styles.speedChipText, playbackSpeed === s && styles.speedChipTextActive]}>
+                        {s === 1 ? "1×" : `${s}×`}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <Text style={styles.optionSectionLabel}>Audio</Text>
+                {audioTracks.length === 0 ? (
+                  <Text style={styles.trackEmpty}>No audio tracks detected.</Text>
+                ) : audioTracks.map((track, i) => {
+                  const isActive = currentAudioTrack?.id === track.id;
+                  return (
+                    <TouchableOpacity
+                      key={track.id ? `audio-${track.id}` : `audio-${i}`}
+                      style={[styles.trackRow, isActive && styles.trackRowActive]}
+                      onPress={() => { player.audioTrack = track as AudioTrack; setCurrentAudioTrack(track); }}
+                    >
+                      <Text style={styles.trackRowLabel}>{track.label || track.language || `Track ${i + 1}`}</Text>
+                      {isActive && <Text style={styles.trackCheck}>✓</Text>}
+                    </TouchableOpacity>
+                  );
+                })}
+
+                <Text style={styles.optionSectionLabel}>Subtitles</Text>
+                <TouchableOpacity
+                  style={[styles.trackRow, currentSubtitleTrack === null && styles.trackRowActive]}
+                  onPress={() => { player.subtitleTrack = null; setCurrentSubtitleTrack(null); }}
+                >
+                  <Text style={styles.trackRowLabel}>Off</Text>
+                  {currentSubtitleTrack === null && <Text style={styles.trackCheck}>✓</Text>}
+                </TouchableOpacity>
+                {subtitleTracks.length === 0 ? (
+                  <Text style={styles.trackEmpty}>No subtitle tracks detected.</Text>
+                ) : subtitleTracks.map((track, i) => {
+                  const isActive = currentSubtitleTrack?.id === track.id;
+                  return (
+                    <TouchableOpacity
+                      key={track.id ? `sub-${track.id}` : `sub-${i}`}
+                      style={[styles.trackRow, isActive && styles.trackRowActive]}
+                      onPress={() => { player.subtitleTrack = track as SubtitleTrack; setCurrentSubtitleTrack(track); }}
+                    >
+                      <Text style={styles.trackRowLabel}>{track.label || track.language || `Track ${i + 1}`}</Text>
+                      {isActive && <Text style={styles.trackCheck}>✓</Text>}
+                    </TouchableOpacity>
+                  );
+                })}
+              </>
+            )}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      )}
+
       {/* ── Mood Check-In ───────────────────────────────────────── */}
       {showMoodCheck && (
         <Animated.View
@@ -521,8 +658,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   video: {
-    width,
-    height,
+    ...StyleSheet.absoluteFillObject,
   },
 
   // ── Controls overlay ─────────────────────────────────────────────
@@ -559,6 +695,65 @@ const styles = StyleSheet.create({
     fontFamily: Typography.sansMedium,
     fontSize: 13,
     color: Colors.textPrimary,
+  },
+
+  // ── Options pill (top-right) ──────────────────────────────────
+  optionsBtn: {
+    position: "absolute",
+    top: 52,
+    right: 20,
+    backgroundColor: "rgba(0,0,0,0.52)",
+    borderRadius: 22,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 0.5,
+    borderColor: "rgba(255,255,255,0.12)",
+    zIndex: 10,
+  },
+  optionsBtnText: {
+    fontSize: 18,
+    color: Colors.textPrimary,
+    lineHeight: 18,
+    letterSpacing: 2,
+  },
+
+  // ── Options sheet sections ─────────────────────────────────
+  optionSectionLabel: {
+    fontFamily: Typography.sansSemiBold,
+    fontSize: 11,
+    color: Colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    paddingHorizontal: 10,
+    marginTop: 12,
+    marginBottom: 2,
+  },
+  speedRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  speedChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 0.5,
+    borderColor: "rgba(255,255,255,0.1)",
+  },
+  speedChipActive: {
+    backgroundColor: Colors.brand,
+    borderColor: Colors.brand,
+  },
+  speedChipText: {
+    fontFamily: Typography.sansMedium,
+    fontSize: 13,
+    color: Colors.textSecondary,
+  },
+  speedChipTextActive: {
+    color: "#fff",
   },
 
   // ── Mood Check-In ────────────────────────────────────────────────
@@ -621,6 +816,69 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.textMuted,
     marginTop: 4,
+  },
+
+  // ── Track Picker Sheet ───────────────────────────────────────────
+  trackBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "flex-end",
+  },
+  trackSheetContainer: {
+    backgroundColor: "#141418",
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    borderWidth: 0.6,
+    borderBottomWidth: 0,
+    borderColor: "rgba(255,255,255,0.1)",
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 46,
+  },
+  trackSheetHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    alignSelf: "center",
+    marginBottom: 16,
+  },
+  trackSheetTitle: {
+    fontFamily: Typography.display,
+    fontSize: 20,
+    color: Colors.textPrimary,
+    letterSpacing: -0.3,
+    marginBottom: 8,
+    paddingHorizontal: 4,
+  },
+  trackRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+  },
+  trackRowActive: {
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  trackRowLabel: {
+    fontFamily: Typography.sansMedium,
+    fontSize: 15,
+    color: Colors.textPrimary,
+  },
+  trackCheck: {
+    fontFamily: Typography.sansMedium,
+    fontSize: 15,
+    color: Colors.brand,
+  },
+  trackEmpty: {
+    fontFamily: Typography.sans,
+    fontSize: 14,
+    color: Colors.textMuted,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+    textAlign: "center",
   },
 });
 

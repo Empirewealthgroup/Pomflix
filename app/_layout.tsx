@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import * as ScreenOrientation from "expo-screen-orientation";
 import {
   useFonts,
   PlayfairDisplay_600SemiBold,
@@ -15,6 +16,7 @@ import {
 } from "@expo-google-fonts/inter";
 import * as SplashScreen from "expo-splash-screen";
 import { useAuthStore } from "@/lib/store/authStore";
+import { useFeedbackStore } from "@/lib/store/feedbackStore";
 import { useRouter, useSegments } from "expo-router";
 import ErrorBoundary from "@/components/ErrorBoundary";
 
@@ -22,11 +24,13 @@ SplashScreen.preventAutoHideAsync();
 
 function AuthGuard() {
   const { token, isLoading, loadStoredAuth } = useAuthStore();
+  const { loadFeedback } = useFeedbackStore();
   const router = useRouter();
   const segments = useSegments();
 
   useEffect(() => {
     loadStoredAuth();
+    loadFeedback();
   }, []);
 
   useEffect(() => {
@@ -57,6 +61,11 @@ export default function RootLayout() {
     if (fontsLoaded) SplashScreen.hideAsync();
   }, [fontsLoaded]);
 
+  // Default all screens to portrait; player overrides this on mount
+  useEffect(() => {
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+  }, []);
+
   if (!fontsLoaded) return null;
 
   return (
@@ -81,6 +90,18 @@ export default function RootLayout() {
         <Stack.Screen
           name="player/[itemId]"
           options={{ animation: "fade", presentation: "fullScreenModal" }}
+        />
+        <Stack.Screen
+          name="moods/index"
+          options={{ animation: "slide_from_right" }}
+        />
+        <Stack.Screen
+          name="settings/index"
+          options={{ animation: "slide_from_right" }}
+        />
+        <Stack.Screen
+          name="settings/moods"
+          options={{ animation: "slide_from_right" }}
         />
       </Stack>
     </ErrorBoundary>
