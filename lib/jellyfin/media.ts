@@ -1,5 +1,5 @@
 import { jellyfinFetch } from "./client";
-import type { JellyfinItem, JellyfinItemsResponse, JellyfinPlaybackInfo } from "./types";
+import type { JellyfinItem, JellyfinItemsResponse, JellyfinPlaybackInfo, JellyfinGenre } from "./types";
 import type { Mode } from "@/constants/modes";
 
 const FIELDS = "Overview,Genres,Tags,CommunityRating,ProductionYear,RunTimeTicks,ImageTags,BackdropImageTags,UserData";
@@ -195,12 +195,14 @@ export async function getLibraryItems(
   options: {
     type?: "Movie" | "Series";
     sortBy?: string;
+    sortOrder?: string;
     search?: string;
+    genreIds?: string;
     startIndex?: number;
     limit?: number;
   } = {}
 ): Promise<JellyfinItemsResponse> {
-  const { type, sortBy = "SortName", search, startIndex = 0, limit = 40 } = options;
+  const { type, sortBy = "SortName", sortOrder = "Ascending", search, genreIds, startIndex = 0, limit = 40 } = options;
   return jellyfinFetch<JellyfinItemsResponse>(
     serverUrl,
     `/Users/${userId}/Items`,
@@ -210,18 +212,45 @@ export async function getLibraryItems(
         IncludeItemTypes: type ?? "Movie,Series",
         Recursive: true,
         SortBy: sortBy,
-        SortOrder: "Ascending",
+        SortOrder: sortOrder,
         StartIndex: startIndex,
         Limit: limit,
         Fields: FIELDS,
         EnableImageTypes: "Primary,Backdrop",
         ...(search ? { SearchTerm: search } : {}),
+        ...(genreIds ? { GenreIds: genreIds } : {}),
       },
     }
   );
 }
 
 // ── Playback ──────────────────────────────────────────────────────────────
+
+// iOS-native formats: MP4/MOV/M4V with H.264 or HEVC, AAC audio
+// Anything outside this gets a TranscodingUrl back from Jellyfin
+const IOS_DEVICE_PROFILE = {
+  DirectPlayProfiles: [
+    {
+      Type: "Video",
+      Container: "mp4,m4v,mov",
+      VideoCodec: "h264,hevc,h265",
+      AudioCodec: "aac,mp3,ac3,eac3",
+    },
+  ],
+  TranscodingProfiles: [
+    {
+      Type: "Video",
+      Container: "mp4",
+      VideoCodec: "h264",
+      AudioCodec: "aac",
+      Protocol: "http",
+      Context: "Streaming",
+      MaxAudioChannels: "2",
+    },
+  ],
+  ContainerProfiles: [],
+  CodecProfiles: [],
+};
 
 export async function getPlaybackInfo(
   serverUrl: string,
@@ -237,9 +266,7 @@ export async function getPlaybackInfo(
       token,
       body: {
         UserId: userId,
-        DeviceProfile: {
-          DirectPlayProfiles: [{ Type: "Video" }],
-        },
+        DeviceProfile: IOS_DEVICE_PROFILE,
       },
     }
   );
@@ -448,4 +475,29 @@ export function formatRuntime(ticks: number): string {
   const h = Math.floor(mins / 60);
   const m = mins % 60;
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+// ── Genres ────────────────────────────────────────────────────────────────
+
+export async function getGenres(
+  serverUrl: string,
+  token: string,
+  userId: string,
+  type?: "Movie" | "Series"
+): Promise<JellyfinGenre[]> {
+  const res = await jellyfinFetch<{ Items: JellyfinGenre[]; TotalRecordCount: number }>(
+    serverUrl,
+    `/Genres`,
+    {
+      token,
+      params: {
+        UserId: userId,
+        SortBy: "SortName",
+        SortOrder: "Ascending",
+        Recursive: true,
+        IncludeItemTypes: type ?? "Movie,Series",
+      },
+    }
+  );
+  return res.Items ?? [];
 }

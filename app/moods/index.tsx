@@ -19,6 +19,8 @@ import { LinearGradient } from "expo-linear-gradient";
 
 const { width } = Dimensions.get("window");
 const CARD_W = Math.floor((width - Spacing.screen * 2 - Spacing.sm) / 2);
+const BG = "#0A0A0C";
+const TEXT3 = "rgba(255,255,255,0.28)";
 
 // ── Individual mood card ──────────────────────────────────────────────────────
 function MoodRow({ mode, onPress }: { mode: Mode; onPress: () => void }) {
@@ -70,8 +72,16 @@ export default function MoodsScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
+      {/* Warm shimmer background */}
+      <LinearGradient
+        colors={["rgba(255,230,140,0.05)", "rgba(230,110,90,0.025)", "transparent"]}
+        locations={[0, 0.4, 0.8]}
+        style={StyleSheet.absoluteFill}
+        start={{ x: 0.2, y: 0 }}
+        end={{ x: 0.8, y: 0.45 }}
+        pointerEvents="none"
+      />
       <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
-        {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} hitSlop={10} style={styles.back}>
             <Text style={styles.backText}>← Back</Text>
@@ -87,7 +97,7 @@ export default function MoodsScreen() {
           {/* Recently Used */}
           {recentMoods.length > 0 && (
             <View style={styles.section}>
-              <Text style={styles.sectionLabel}>Recently Used</Text>
+              <Text style={styles.sectionLabel}>RECENTLY USED</Text>
               <View style={styles.grid}>
                 {recentMoods.slice(0, 4).map((mode) => (
                   <MoodRow key={mode.id} mode={mode} onPress={() => handlePress(mode)} />
@@ -99,7 +109,7 @@ export default function MoodsScreen() {
           {/* Grouped by category */}
           {MOOD_CATEGORIES.map((cat) => (
             <View key={cat.id} style={styles.section}>
-              <Text style={styles.sectionLabel}>{cat.label}</Text>
+              <Text style={styles.sectionLabel}>{cat.label.toUpperCase()}</Text>
               <View style={styles.grid}>
                 {cat.moods.map((mode) => (
                   <MoodRow key={mode.id} mode={mode} onPress={() => handlePress(mode)} />
@@ -114,7 +124,7 @@ export default function MoodsScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.bg },
+  safe: { flex: 1, backgroundColor: BG },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -126,28 +136,28 @@ const styles = StyleSheet.create({
   backText: {
     fontFamily: Typography.sansMedium,
     fontSize: 14,
-    color: Colors.textSecondary,
+    color: "rgba(255,255,255,0.5)",
   },
   title: {
     flex: 1,
-    fontFamily: Typography.display,
-    fontSize: 22,
+    fontFamily: Typography.displayBold,
+    fontSize: 24,
     color: Colors.textPrimary,
     textAlign: "center",
-    letterSpacing: -0.4,
+    letterSpacing: -0.5,
   },
   content: {
     paddingHorizontal: Spacing.screen,
     paddingBottom: 80,
     gap: Spacing.xl,
   },
-  section: { gap: Spacing.sm },
+  section: { gap: 10 },
   sectionLabel: {
     fontFamily: Typography.sansSemiBold,
-    fontSize: 11,
-    color: Colors.textSecondary,
+    fontSize: 10.5,
+    color: TEXT3,
     textTransform: "uppercase",
-    letterSpacing: 1,
+    letterSpacing: 1.5,
   },
   grid: {
     flexDirection: "row",
@@ -161,33 +171,33 @@ const mStyles = StyleSheet.create({
     borderRadius: Radii.lg,
     overflow: "hidden",
     borderWidth: 0.5,
-    borderColor: Colors.surfaceBorder,
+    borderColor: "rgba(255,255,255,0.07)",
     shadowColor: "#000",
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 5,
+    shadowOpacity: 0.45,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 6,
   },
   gradient: {
     padding: Spacing.md,
-    minHeight: 120,
+    minHeight: 126,
     justifyContent: "space-between",
   },
   glow: {
     position: "absolute",
-    top: -16,
-    left: -16,
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    opacity: 0.55,
+    top: -18,
+    left: -18,
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    opacity: 0.5,
   },
-  icon: { fontSize: 22, lineHeight: 26 },
+  icon: { fontSize: 24, lineHeight: 28 },
   label: {
     fontFamily: Typography.display,
     fontSize: 17,
     color: Colors.textPrimary,
-    letterSpacing: -0.2,
+    letterSpacing: -0.25,
   },
   tagline: {
     fontFamily: Typography.sans,

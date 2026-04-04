@@ -94,7 +94,7 @@ export default function MediaCard({
       {showMeta && (
         <View style={styles.meta}>
           <Text style={styles.title} numberOfLines={1}>{item.Name}</Text>
-          {item.ProductionYear && (
+          {!!item.ProductionYear && (
             <Text style={styles.sub}>
               {item.ProductionYear}
               {item.RunTimeTicks ? `  ·  ${formatRuntime(item.RunTimeTicks)}` : ""}

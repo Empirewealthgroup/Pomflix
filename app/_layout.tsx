@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import * as ScreenOrientation from "expo-screen-orientation";
 import {
   useFonts,
   PlayfairDisplay_600SemiBold,
@@ -47,7 +46,7 @@ function AuthGuard() {
 }
 
 export default function RootLayout() {
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     PlayfairDisplay_600SemiBold,
     PlayfairDisplay_700Bold,
     PlayfairDisplay_600SemiBold_Italic,
@@ -58,15 +57,10 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
-    if (fontsLoaded) SplashScreen.hideAsync();
-  }, [fontsLoaded]);
+    if (fontsLoaded || fontError) SplashScreen.hideAsync();
+  }, [fontsLoaded, fontError]);
 
-  // Default all screens to portrait; player overrides this on mount
-  useEffect(() => {
-    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
-  }, []);
-
-  if (!fontsLoaded) return null;
+  if (!fontsLoaded && !fontError) return null;
 
   return (
     <ErrorBoundary>
@@ -88,6 +82,10 @@ export default function RootLayout() {
           options={{ animation: "slide_from_right" }}
         />
         <Stack.Screen
+          name="genre/[genreId]"
+          options={{ animation: "slide_from_right" }}
+        />
+        <Stack.Screen
           name="player/[itemId]"
           options={{ animation: "fade", presentation: "fullScreenModal" }}
         />
@@ -97,11 +95,21 @@ export default function RootLayout() {
         />
         <Stack.Screen
           name="settings/index"
-          options={{ animation: "slide_from_right" }}
+          options={{
+            animation: "fade_from_bottom",
+            animationDuration: 420,
+            gestureEnabled: true,
+            gestureDirection: "vertical",
+          }}
         />
         <Stack.Screen
           name="settings/moods"
-          options={{ animation: "slide_from_right" }}
+          options={{
+            animation: "fade_from_bottom",
+            animationDuration: 380,
+            gestureEnabled: true,
+            gestureDirection: "vertical",
+          }}
         />
       </Stack>
     </ErrorBoundary>

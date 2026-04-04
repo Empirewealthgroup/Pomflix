@@ -95,7 +95,7 @@ export default function ModeCard({
 
   const handlePress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const navigate = () => router.push(`/mode/${mode.id}`);
+    const navigate = () => router.push({ pathname: "/mode/[id]", params: { id: mode.id } });
     if (onTransition) {
       onTransition(mode.colors.base, navigate);
     } else {
@@ -107,7 +107,7 @@ export default function ModeCard({
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     onQuickPlay?.(mode.id);
     const navigate = () =>
-      router.push({ pathname: `/mode/${mode.id}`, params: { autoPlay: "1" } });
+      router.push({ pathname: "/mode/[id]", params: { id: mode.id, autoPlay: "1" } });
     if (onTransition) {
       onTransition(mode.colors.base, navigate);
     } else {

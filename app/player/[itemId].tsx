@@ -19,10 +19,13 @@ import { useSessionStore } from "@/lib/store/sessionStore";
 import {
   getPlaybackInfo,
   getStreamUrl,
+  getItem,
   reportPlaybackStart,
   reportPlaybackProgress,
   reportPlaybackStopped,
+  formatRuntime,
 } from "@/lib/jellyfin/media";
+import type { JellyfinItem } from "@/lib/jellyfin/types";
 import { Colors, Typography } from "@/constants/theme";
 import { useNowPlayingStore } from "@/lib/store/nowPlayingStore";
 import { useFeedbackStore, type FeedbackRating } from "@/lib/store/feedbackStore";
@@ -35,7 +38,7 @@ const PROGRESS_INTERVAL_MS = 10_000;
 let _swipeHintSeen = false;
 
 export default function PlayerScreen() {
-  const { itemId, itemName } = useLocalSearchParams<{ itemId: string; itemName?: string }>();
+  const { itemId, itemName, startPositionTicks } = useLocalSearchParams<{ itemId: string; itemName?: string; startPositionTicks?: string }>();
   const router = useRouter();
   const { serverUrl, token, userId } = useAuthStore();
   const { updateSessionItem, currentSession } = useSessionStore();
@@ -47,6 +50,8 @@ export default function PlayerScreen() {
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [showControls, setShowControls] = useState(true);
   const [showMoodCheck, setShowMoodCheck] = useState(false);
+  const [itemMeta, setItemMeta] = useState<JellyfinItem | null>(null);
+  const [playedPct, setPlayedPct] = useState(0);
 
   // Track picker
   const [audioTracks, setAudioTracks] = useState<AudioTrack[]>([]);
@@ -62,6 +67,10 @@ export default function PlayerScreen() {
   // Mood check animations
   const moodSlideAnim = useRef(new Animated.Value(200)).current;
   const moodFadeAnim = useRef(new Animated.Value(0)).current;
+
+  // Options sheet animations
+  const optionsSheetSlide = useRef(new Animated.Value(400)).current;
+  const optionsSheetFade = useRef(new Animated.Value(0)).current;
 
   // Track actual watch duration
   const watchStartTime = useRef<number>(0);
@@ -120,18 +129,44 @@ export default function PlayerScreen() {
     })
   ).current;
 
-  // Resolve stream URL
+  // Sheet swipe-down pan responder
+  const sheetPanRef = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gs) => gs.dy > 10 && gs.dy > Math.abs(gs.dx) * 1.5,
+      onPanResponderMove: (_, gs) => { if (gs.dy > 0) optionsSheetSlide.setValue(gs.dy); },
+      onPanResponderRelease: (_, gs) => {
+        if (gs.dy > 60 || gs.vy > 0.4) {
+          Animated.parallel([
+            Animated.timing(optionsSheetSlide, { toValue: 400, duration: 280, useNativeDriver: true }),
+            Animated.timing(optionsSheetFade, { toValue: 0, duration: 220, useNativeDriver: true }),
+          ]).start(() => { setShowOptionsSheet(false); setTrackSheet(null); });
+        } else {
+          Animated.spring(optionsSheetSlide, { toValue: 0, useNativeDriver: true, tension: 200, friction: 16 }).start();
+        }
+      },
+    })
+  ).current;
+
+  // Resolve stream URL + fetch item metadata in parallel
   useEffect(() => {
     if (!serverUrl || !token || !userId || !itemId) return;
     (async () => {
       try {
-        const info = await getPlaybackInfo(serverUrl, token, userId, itemId);
+        const [info, meta] = await Promise.all([
+          getPlaybackInfo(serverUrl, token, userId, itemId),
+          getItem(serverUrl, token, userId, itemId).catch(() => null),
+        ]);
+        if (meta) setItemMeta(meta);
         const source = info.MediaSources?.[0];
         if (!source) throw new Error("No media source found.");
         mediaSourceId.current = source.Id;
         playSessionIdRef.current = info.PlaySessionId ?? "";
         playSessionId.current = info.PlaySessionId ?? "";
-        const url = getStreamUrl(serverUrl, itemId, token, source.Id);
+        // Use TranscodingUrl when Jellyfin says the format needs transcoding,
+        // otherwise fall back to the static direct-stream URL.
+        const url = source.TranscodingUrl
+          ? `${serverUrl}${source.TranscodingUrl}`
+          : getStreamUrl(serverUrl, itemId, token, source.Id);
         setStreamUrl(url);
         reportPlaybackStart(serverUrl, token, itemId, source.Id, playSessionIdRef.current);
       } catch (err: unknown) {
@@ -195,6 +230,7 @@ export default function PlayerScreen() {
       );
       // Update session with current item + progress
       const pct = duration > 0 ? (currentTime / duration) * 100 : 0;
+      setPlayedPct(pct);
       updateSessionItem(itemId!, itemName || itemId!, pct);
       updateNowPlayingProgress(pct);
     }, PROGRESS_INTERVAL_MS);
@@ -203,9 +239,9 @@ export default function PlayerScreen() {
 
   // Lock to landscape on mount, restore portrait on unmount
   useEffect(() => {
-    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
     return () => {
-      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
     };
   }, []);
 
@@ -218,6 +254,8 @@ export default function PlayerScreen() {
         setSubtitleTracks(player.availableSubtitleTracks ?? []);
         setCurrentAudioTrack(player.audioTrack ?? null);
         setCurrentSubtitleTrack(player.subtitleTrack ?? null);
+        const resumeSecs = startPositionTicks ? Number(startPositionTicks) / 10_000_000 : 0;
+        if (resumeSecs > 5) player.currentTime = resumeSecs;
       }),
       player.addListener("availableAudioTracksChange", ({ availableAudioTracks }) => {
         setAudioTracks(availableAudioTracks);
@@ -305,6 +343,24 @@ export default function PlayerScreen() {
       clearNowPlaying();
       router.back();
     }
+  };
+
+  const openOptionsSheet = () => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    optionsSheetSlide.setValue(400);
+    optionsSheetFade.setValue(0);
+    setShowOptionsSheet(true);
+    Animated.parallel([
+      Animated.spring(optionsSheetSlide, { toValue: 0, friction: 14, tension: 120, useNativeDriver: true }),
+      Animated.timing(optionsSheetFade, { toValue: 1, duration: 220, useNativeDriver: true }),
+    ]).start();
+  };
+
+  const closeOptionsSheet = () => {
+    Animated.parallel([
+      Animated.timing(optionsSheetSlide, { toValue: 400, duration: 280, useNativeDriver: true }),
+      Animated.timing(optionsSheetFade, { toValue: 0, duration: 220, useNativeDriver: true }),
+    ]).start(() => { setShowOptionsSheet(false); setTrackSheet(null); });
   };
 
   const dismissMoodCheck = (rating?: FeedbackRating) => {
@@ -402,6 +458,13 @@ export default function PlayerScreen() {
                 pointerEvents="none"
               />
 
+              {/* Bottom scrim */}
+              <LinearGradient
+                colors={["transparent", "rgba(0,0,0,0.72)"]}
+                style={styles.bottomScrim}
+                pointerEvents="none"
+              />
+
               {/* Close pill */}
               <TouchableOpacity
                 style={styles.closeBtn}
@@ -415,14 +478,53 @@ export default function PlayerScreen() {
               {/* Options pill — speed, audio, subtitles */}
               <TouchableOpacity
                 style={styles.optionsBtn}
-                onPress={() => {
-                  if (hideTimer.current) clearTimeout(hideTimer.current);
-                  setShowOptionsSheet(true);
-                }}
+                onPress={openOptionsSheet}
                 hitSlop={12}
               >
                 <Text style={styles.optionsBtnText}>⋯</Text>
               </TouchableOpacity>
+
+              {/* ── Now Playing info bar (bottom) ── */}
+              <View style={styles.infoBar} pointerEvents="none">
+                {/* Mode badge */}
+                {currentSession?.modeLabel ? (
+                  <View style={[styles.modeBadge, { backgroundColor: `${currentSession.modeColor}33`, borderColor: `${currentSession.modeColor}66` }]}>
+                    <Text style={[styles.modeBadgeText, { color: currentSession.modeColor }]}>
+                      {currentSession.modeIcon}  {currentSession.modeLabel}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {/* Title */}
+                <Text style={styles.infoTitle} numberOfLines={1}>
+                  {itemMeta?.Name ?? itemName}
+                </Text>
+
+                {/* Meta row */}
+                <View style={styles.infoMeta}>
+                  {!!itemMeta?.ProductionYear && (
+                    <Text style={styles.infoMetaText}>{itemMeta.ProductionYear}</Text>
+                  )}
+                  {!!itemMeta?.RunTimeTicks && (
+                    <Text style={styles.infoMetaText}>{formatRuntime(itemMeta.RunTimeTicks)}</Text>
+                  )}
+                  {itemMeta?.OfficialRating ? (
+                    <View style={styles.ratingBadge}>
+                      <Text style={styles.ratingText}>{itemMeta.OfficialRating}</Text>
+                    </View>
+                  ) : null}
+                  {!!itemMeta?.CommunityRating && (
+                    <Text style={styles.infoMetaText}>★ {itemMeta.CommunityRating.toFixed(1)}</Text>
+                  )}
+                </View>
+
+                {/* Progress bar */}
+                {playedPct > 0 ? (
+                  <View style={styles.infoProgress}>
+                    <View style={[styles.infoProgressFill, { width: `${Math.min(playedPct, 100)}%` as any }]} />
+                  </View>
+                ) : null}
+              </View>
             </Animated.View>
           )}
         </>
@@ -430,11 +532,20 @@ export default function PlayerScreen() {
 
       {/* ── Playback Options Sheet (speed + audio + subtitles) ────── */}
       {showOptionsSheet && (
-        <TouchableOpacity
-          style={styles.trackBackdrop}
-          activeOpacity={1}
-          onPress={() => { setShowOptionsSheet(false); setTrackSheet(null); }}
-        >
+        <View style={styles.trackBackdrop}>
+          <Animated.View
+            style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(0,0,0,0.55)", opacity: optionsSheetFade }]}
+            pointerEvents="none"
+          />
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={closeOptionsSheet}
+          />
+          <Animated.View
+            style={{ transform: [{ translateY: optionsSheetSlide }] }}
+            {...sheetPanRef.panHandlers}
+          >
           <TouchableOpacity style={styles.trackSheetContainer} activeOpacity={1} onPress={() => {}}>
             <View style={styles.trackSheetHandle} />
 
@@ -504,7 +615,8 @@ export default function PlayerScreen() {
               </>
             )}
           </TouchableOpacity>
-        </TouchableOpacity>
+          </Animated.View>
+        </View>
       )}
 
       {/* ── Mood Check-In ───────────────────────────────────────── */}
@@ -672,6 +784,80 @@ const styles = StyleSheet.create({
     right: 0,
     height: 110,
   },
+  bottomScrim: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 160,
+  },
+
+  // ── Now Playing info bar ──────────────────────────────────────
+  infoBar: {
+    position: "absolute",
+    bottom: 24,
+    left: 24,
+    right: 120, // leave room for options pill on right
+    gap: 5,
+  },
+  modeBadge: {
+    alignSelf: "flex-start",
+    borderRadius: 20,
+    borderWidth: 0.6,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    marginBottom: 2,
+  },
+  modeBadgeText: {
+    fontFamily: Typography.sansMedium,
+    fontSize: 11,
+    letterSpacing: 0.2,
+  },
+  infoTitle: {
+    fontFamily: Typography.display,
+    fontSize: 22,
+    color: "#fff",
+    letterSpacing: -0.3,
+    textShadowColor: "rgba(0,0,0,0.7)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+  infoMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+  infoMetaText: {
+    fontFamily: Typography.sansMedium,
+    fontSize: 12,
+    color: "rgba(255,255,255,0.72)",
+  },
+  ratingBadge: {
+    borderRadius: 3,
+    borderWidth: 0.8,
+    borderColor: "rgba(255,255,255,0.45)",
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  ratingText: {
+    fontFamily: Typography.sansMedium,
+    fontSize: 10,
+    color: "rgba(255,255,255,0.65)",
+    letterSpacing: 0.3,
+  },
+  infoProgress: {
+    height: 2.5,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    borderRadius: 2,
+    overflow: "hidden",
+    marginTop: 4,
+  },
+  infoProgressFill: {
+    height: 2.5,
+    backgroundColor: Colors.brandLight,
+    borderRadius: 2,
+  },
   closeBtn: {
     position: "absolute",
     top: 52,
@@ -821,11 +1007,10 @@ const styles = StyleSheet.create({
   // ── Track Picker Sheet ───────────────────────────────────────────
   trackBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.55)",
     justifyContent: "flex-end",
   },
   trackSheetContainer: {
-    backgroundColor: "#141418",
+    backgroundColor: "rgba(14,14,18,0.92)",
     borderTopLeftRadius: 22,
     borderTopRightRadius: 22,
     borderWidth: 0.6,

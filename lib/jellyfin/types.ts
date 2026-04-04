@@ -78,8 +78,16 @@ export interface JellyfinMediaSource {
   Name: string;
   Path: string;
   DirectStreamUrl?: string;
+  TranscodingUrl?: string;
   SupportsDirectStream: boolean;
   SupportsDirectPlay: boolean;
+  SupportsTranscoding: boolean;
   Container: string;
   Bitrate?: number;
+}
+
+export interface JellyfinGenre {
+  Id: string;
+  Name: string;
+  ImageTags?: { Primary?: string };
 }

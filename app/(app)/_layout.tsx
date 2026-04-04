@@ -6,11 +6,13 @@ import {
   Platform,
   TouchableOpacity,
   Animated,
+  Easing,
 } from "react-native";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LinearGradient } from "expo-linear-gradient";
 import { Colors, Typography } from "@/constants/theme";
 import { useNowPlayingStore, type NowPlayingItem } from "@/lib/store/nowPlayingStore";
+import { useSessionStore } from "@/lib/store/sessionStore";
 
 // ─── Ambient Now Playing Bar ──────────────────────────────────────────────────
 function NowPlayingBar() {
@@ -118,6 +120,48 @@ function HomeIcon({ focused }: { focused: boolean }) {
 }
 
 export default function AppLayout() {
+  const router = useRouter();
+  const { currentSession } = useSessionStore();
+  const veilAnim = useRef(new Animated.Value(0)).current;
+  const pendingRoute = useRef<string | null>(null);
+  const transitioning = useRef(false);
+
+  // Use current mood base color if a session is active, else brand color
+  const veilColor = currentSession?.modeColor ?? Colors.brand;
+
+  // Fade in → navigate at peak → fade out
+  const triggerVeil = useCallback(
+    (targetRoute: string) => {
+      if (transitioning.current) return;
+      transitioning.current = true;
+      pendingRoute.current = targetRoute;
+      veilAnim.setValue(0);
+      // Fade IN
+      Animated.timing(veilAnim, {
+        toValue: 1,
+        duration: 220,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: true,
+      }).start(() => {
+        // Navigate at peak opacity
+        if (pendingRoute.current) {
+          router.push(pendingRoute.current as any);
+          pendingRoute.current = null;
+        }
+        // Fade OUT
+        Animated.timing(veilAnim, {
+          toValue: 0,
+          duration: 480,
+          easing: Easing.in(Easing.ease),
+          useNativeDriver: true,
+        }).start(() => {
+          transitioning.current = false;
+        });
+      });
+    },
+    [veilAnim, router]
+  );
+
   return (
     <View style={{ flex: 1 }}>
       <NowPlayingBar />
@@ -158,6 +202,12 @@ export default function AppLayout() {
             </View>
           ),
         }}
+        listeners={{
+          tabPress: (e) => {
+            e.preventDefault();
+            triggerVeil("/(app)/");
+          },
+        }}
       />
       <Tabs.Screen
         name="library"
@@ -172,8 +222,28 @@ export default function AppLayout() {
             </View>
           ),
         }}
+        listeners={{
+          tabPress: (e) => {
+            e.preventDefault();
+            triggerVeil("/(app)/library");
+          },
+        }}
       />
     </Tabs>
+      {/* Browse/Home tab transition veil */}
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          { opacity: veilAnim, zIndex: 50 },
+        ]}
+      >
+        <LinearGradient
+          colors={[veilColor, "#0A0A0C"]}
+          locations={[0, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+      </Animated.View>
     </View>
   );
 }

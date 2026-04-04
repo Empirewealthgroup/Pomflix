@@ -123,10 +123,12 @@ export default function ModeScreen() {
         setVisibleItems(visible);
         // Long-press quick play: jump straight to first item
         if (autoPlay === "1" && ranked.length > 0) {
-          router.replace({
-            pathname: "/player/[itemId]",
-            params: { itemId: ranked[0].Id, itemName: ranked[0].Name ?? "" },
-          });
+          const first = ranked[0];
+          if (first.Type === "Series") {
+            router.push({ pathname: "/series/[seriesId]", params: { seriesId: first.Id } });
+          } else {
+            router.push({ pathname: "/player/[itemId]", params: { itemId: first.Id, itemName: first.Name ?? "" } });
+          }
         }
       })
       .catch(() => setLoadError(true))
@@ -168,22 +170,20 @@ export default function ModeScreen() {
     }
   }, [mode, serverUrl, token, userId]);
 
-  const handlePlay = (itemId: string, itemName?: string) => {
+  const handlePlay = (item: JellyfinItem) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    router.push({
-      pathname: "/player/[itemId]",
-      params: { itemId, itemName: itemName ?? "" },
-    });
+    if (item.Type === "Series") {
+      router.push({ pathname: "/series/[seriesId]", params: { seriesId: item.Id } });
+    } else {
+      router.push({ pathname: "/player/[itemId]", params: { itemId: item.Id, itemName: item.Name ?? "" } });
+    }
   };
 
   const handleSurpriseMe = () => {
     if (visibleItems.length === 0) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     const pick = visibleItems[Math.floor(Math.random() * visibleItems.length)];
-    router.push({
-      pathname: "/player/[itemId]",
-      params: { itemId: pick.Id, itemName: pick.Name ?? "" },
-    });
+    handlePlay(pick);
   };
 
   const loadTab = async (tab: "movies" | "shows" | "docs") => {
@@ -216,7 +216,7 @@ export default function ModeScreen() {
     const pick = candidates[0] ?? visibleItems[0];
     if (!pick) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    router.push({ pathname: "/player/[itemId]", params: { itemId: pick.Id, itemName: pick.Name ?? "" } });
+    handlePlay(pick);
   };
 
   return (
@@ -353,7 +353,7 @@ export default function ModeScreen() {
                           accentColor={mode.colors.accent}
                           isNew={newItemIds.has(item.Id)}
                           onToggle={() => setSelected(isSelected ? null : item.Id)}
-                          onPlay={() => handlePlay(item.Id, item.Name)}
+                          onPlay={() => handlePlay(item)}
                           onDismiss={() => handleDismiss(item.Id)}
                         />
                       );
@@ -766,13 +766,13 @@ function SuggestionCard({
           <View style={styles.suggestionInfoTop}>
             <Text style={styles.suggestionTitle} numberOfLines={2}>{item.Name}</Text>
             <View style={styles.suggestionMeta}>
-              {item.ProductionYear && (
+              {!!item.ProductionYear && (
                 <Text style={styles.metaText}>{item.ProductionYear}</Text>
               )}
-              {item.RunTimeTicks && (
+              {!!item.RunTimeTicks && (
                 <Text style={styles.metaText}>{formatRuntime(item.RunTimeTicks)}</Text>
               )}
-              {item.CommunityRating && (
+              {!!item.CommunityRating && (
                 <Text style={styles.metaText}>{"*"} {item.CommunityRating.toFixed(1)}</Text>
               )}
             </View>
@@ -815,7 +815,11 @@ function ContentCard({ item, accentColor }: { item: JellyfinItem; accentColor: s
       style={[ccStyles.card, { width: CONTENT_CARD_W }]}
       onPress={() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        router.push({ pathname: "/player/[itemId]", params: { itemId: item.Id, itemName: item.Name ?? "" } });
+        if (item.Type === "Series") {
+          router.push({ pathname: "/series/[seriesId]", params: { seriesId: item.Id } });
+        } else {
+          router.push({ pathname: "/player/[itemId]", params: { itemId: item.Id, itemName: item.Name ?? "" } });
+        }
       }}
       activeOpacity={0.84}
     >

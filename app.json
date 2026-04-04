@@ -2,9 +2,9 @@
   "expo": {
     "name": "Pomflix",
     "slug": "pomflix",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "scheme": "pomflix",
-    "orientation": "default",
+    "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "splash": {
@@ -13,6 +13,7 @@
       "backgroundColor": "#0A0A0C"
     },
     "ios": {
+      "buildNumber": "8",
       "supportsTablet": true,
       "bundleIdentifier": "com.pomflix.app",
       "infoPlist": {
@@ -28,7 +29,6 @@
     },
     "plugins": [
       "expo-router",
-      "expo-screen-orientation",
       "expo-video",
       "expo-secure-store",
       "expo-font"

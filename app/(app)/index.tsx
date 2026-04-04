@@ -6,11 +6,12 @@ import {
   TouchableOpacity,
   FlatList,
   Animated,
+  Dimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Image } from "expo-image";
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { useAuthStore } from "@/lib/store/authStore";
@@ -23,10 +24,14 @@ import { Colors, Typography, Spacing, Radii } from "@/constants/theme";
 import ModeCard from "@/components/ModeCard";
 import { SkeletonRow } from "@/components/SkeletonCard";
 import { useSettingsStore } from "@/lib/store/settingsStore";
+import { useWhatsNewStore, WHATS_NEW_ITEMS } from "@/lib/store/whatsNewStore";
 import type { JellyfinItem } from "@/lib/jellyfin/types";
 
 // ─── Session-persisted last-used mode ────────────────────────────────────────
 let _lastUsedModeId: string | null = null;
+
+const { width: SCREEN_W } = Dimensions.get("window");
+const COMPACT_CARD_W = Math.floor((SCREEN_W - Spacing.screen * 2 - Spacing.sm * 2) / 3);
 
 // ─── Avatar color derived from userId ────────────────────────────────────────
 const AVATAR_PALETTE = ["#8B1A2E", "#4A90C4", "#9B7FD4", "#2AB09A", "#E07030", "#C05080"];
@@ -74,7 +79,7 @@ function getTimeMoods(): TimeMoods {
 function ContinueCard({ item }: { item: JellyfinItem }) {
   const { serverUrl } = useAuthStore();
   const router = useRouter();
-  const CARD_W = 160;
+  const CARD_W = 168;
 
   const imageUrl =
     serverUrl && item.ImageTags?.Primary
@@ -94,10 +99,14 @@ function ContinueCard({ item }: { item: JellyfinItem }) {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         router.push({
           pathname: "/player/[itemId]",
-          params: { itemId: item.Id, itemName: item.Name ?? "" },
+          params: {
+            itemId: item.Id,
+            itemName: item.Name ?? "",
+            startPositionTicks: String(item.UserData?.PlaybackPositionTicks ?? 0),
+          },
         });
       }}
-      activeOpacity={0.85}
+      activeOpacity={0.84}
     >
       <View style={cwStyles.card}>
         {imageUrl ? (
@@ -109,7 +118,7 @@ function ContinueCard({ item }: { item: JellyfinItem }) {
           />
         ) : (
           <View style={cwStyles.placeholder}>
-            <Text style={cwStyles.placeholderText}>{item.Name[0]}</Text>
+            <Text style={cwStyles.placeholderText}>{item.Name?.[0] ?? "?"}</Text>
           </View>
         )}
 
@@ -117,7 +126,7 @@ function ContinueCard({ item }: { item: JellyfinItem }) {
           colors={["transparent", "rgba(5,5,7,0.98)"]}
           style={cwStyles.overlay}
         >
-          <Text style={cwStyles.title} numberOfLines={1}>{item.Name}</Text>
+          <Text style={cwStyles.title} numberOfLines={2}>{item.Name}</Text>
           {timeLeft !== null && (
             <Text style={cwStyles.timeLeft}>{timeLeft} min left</Text>
           )}
@@ -130,9 +139,15 @@ function ContinueCard({ item }: { item: JellyfinItem }) {
           )}
         </LinearGradient>
 
-        <View style={cwStyles.resumeBadge}>
+        {/* Resume badge */}
+        <LinearGradient
+          colors={["rgba(139,26,46,0.85)", "rgba(90,10,25,0.85)"]}
+          style={cwStyles.resumeBadge}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+        >
           <Text style={cwStyles.resumeText}>▶ Resume</Text>
-        </View>
+        </LinearGradient>
       </View>
     </TouchableOpacity>
   );
@@ -199,6 +214,9 @@ export default function HomeScreen() {
   const { currentSession, clearSession, loadStoredSession } = useSessionStore();
   const { hasSeen, markSeen, loadOnboarding } = useOnboardingStore();
   const { prefs, loadPrefs } = useSettingsStore();
+  const { shouldShow: showWhatsNew, load: loadWhatsNew, dismiss: dismissWhatsNew } = useWhatsNewStore();
+  const whatsNewSlide = useRef(new Animated.Value(80)).current;
+  const whatsNewFade = useRef(new Animated.Value(0)).current;
   const [continueItems, setContinueItems] = useState<JellyfinItem[]>([]);
   const [loadingContinue, setLoadingContinue] = useState(true);
   const [continueError, setContinueError] = useState(false);
@@ -275,12 +293,23 @@ export default function HomeScreen() {
   const headerAnim = useRef(new Animated.Value(0)).current;
   const sectionAnim = useRef(new Animated.Value(0)).current;
 
-  const runHomeEntrance = () => {
+  const runHomeEntrance = useCallback(() => {
+    headerAnim.setValue(0);
+    sectionAnim.setValue(0);
     Animated.sequence([
       Animated.timing(headerAnim, { toValue: 1, duration: 450, useNativeDriver: true }),
       Animated.timing(sectionAnim, { toValue: 1, duration: 320, useNativeDriver: true }),
     ]).start();
-  };
+  }, [headerAnim, sectionAnim]);
+
+  useFocusEffect(
+    useCallback(() => {
+      // Skip during new-login flow — that path calls runHomeEntrance itself after welcome
+      if (!isNewLogin) {
+        runHomeEntrance();
+      }
+    }, [isNewLogin, runHomeEntrance])
+  );
 
   const dismissOnboarding = async () => {
     await markSeen();
@@ -329,8 +358,29 @@ export default function HomeScreen() {
     runHomeEntrance();
   }, []);
 
-  useEffect(() => { loadStoredSession(); loadOnboarding(); }, []);
+  useEffect(() => { loadStoredSession(); loadOnboarding(); loadWhatsNew(); }, []);
   useEffect(() => { if (userId) loadPrefs(userId); }, [userId]);
+
+  // Animate What's New in after it's confirmed to show
+  useEffect(() => {
+    if (!showWhatsNew) return;
+    whatsNewSlide.setValue(80);
+    whatsNewFade.setValue(0);
+    const t = setTimeout(() => {
+      Animated.parallel([
+        Animated.spring(whatsNewSlide, { toValue: 0, friction: 14, tension: 100, useNativeDriver: true }),
+        Animated.timing(whatsNewFade, { toValue: 1, duration: 260, useNativeDriver: true }),
+      ]).start();
+    }, 600); // let home entrance finish first
+    return () => clearTimeout(t);
+  }, [showWhatsNew]);
+
+  const handleDismissWhatsNew = () => {
+    Animated.parallel([
+      Animated.timing(whatsNewSlide, { toValue: 80, duration: 220, useNativeDriver: true }),
+      Animated.timing(whatsNewFade, { toValue: 0, duration: 180, useNativeDriver: true }),
+    ]).start(() => dismissWhatsNew());
+  };
 
   useEffect(() => {
     const anim1 = Animated.loop(
@@ -464,11 +514,18 @@ export default function HomeScreen() {
               onQuickPlay={handleQuickPlay}
               onTransition={handleModeTransition}
             />
-            {/* Support moods — 3-column compact row */}
-            <View style={styles.supportRow}>
-              {supportMoods.map((mode, index) => (
+            {/* Support moods — swipeable horizontal row */}
+            <FlatList
+              data={visibleModes.filter((m) => m.id !== heroMood.id)}
+              keyExtractor={(m) => m.id}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              snapToInterval={COMPACT_CARD_W + Spacing.sm}
+              decelerationRate="fast"
+              contentContainerStyle={styles.supportScroll}
+              ItemSeparatorComponent={() => <View style={{ width: Spacing.sm }} />}
+              renderItem={({ item: mode, index }) => (
                 <ModeCard
-                  key={mode.id}
                   mode={mode}
                   isRecent={mode.id === lastUsedModeId}
                   size="compact"
@@ -476,16 +533,8 @@ export default function HomeScreen() {
                   onQuickPlay={handleQuickPlay}
                   onTransition={handleModeTransition}
                 />
-              ))}
-            </View>
-            {/* View all moods */}
-            <TouchableOpacity
-              onPress={() => router.push("/moods")}
-              style={styles.viewAllLink}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.viewAllText}>View all moods →</Text>
-            </TouchableOpacity>
+              )}
+            />
           </View>
         </Animated.View>
 
@@ -519,7 +568,8 @@ export default function HomeScreen() {
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.rowContent}
-                ItemSeparatorComponent={() => <View style={{ width: 12 }} />}
+                snapToInterval={168 + 12}
+                decelerationRate="fast"
                 renderItem={({ item }) => <ContinueCard item={item} />}
               />
             )}
@@ -535,6 +585,52 @@ export default function HomeScreen() {
           { backgroundColor: overlayColor, opacity: overlayAnim },
         ]}
       />
+
+      {/* ── What's New overlay ── */}
+      {showWhatsNew && (
+        <Animated.View
+          style={[
+            StyleSheet.absoluteFill,
+            styles.wnBackdrop,
+            { opacity: whatsNewFade },
+          ]}
+          pointerEvents="box-none"
+        >
+          <Animated.View
+            style={[
+              styles.wnCard,
+              { transform: [{ translateY: whatsNewSlide }] },
+            ]}
+          >
+            <View style={styles.wnHeaderRow}>
+              <Text style={styles.wnHeadline}>What's New</Text>
+              <View style={styles.wnVersionBadge}>
+                <Text style={styles.wnVersionText}>v1.1</Text>
+              </View>
+            </View>
+
+            <View style={styles.wnItems}>
+              {WHATS_NEW_ITEMS.map((it, i) => (
+                <View key={i} style={styles.wnItem}>
+                  <Text style={styles.wnItemIcon}>{it.icon}</Text>
+                  <View style={styles.wnItemText}>
+                    <Text style={styles.wnItemTitle}>{it.title}</Text>
+                    <Text style={styles.wnItemBody}>{it.body}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+
+            <TouchableOpacity
+              style={styles.wnBtn}
+              onPress={handleDismissWhatsNew}
+              activeOpacity={0.82}
+            >
+              <Text style={styles.wnBtnText}>Got it  →</Text>
+            </TouchableOpacity>
+          </Animated.View>
+        </Animated.View>
+      )}
 
       {/* ── Onboarding overlay (first login only) ── */}
       {showOnboarding && (
@@ -591,6 +687,92 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bg },
+
+  // ── What's New modal ───────────────────────────────────────────
+  wnBackdrop: {
+    backgroundColor: "rgba(0,0,0,0.72)",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    paddingHorizontal: Spacing.screen,
+    paddingBottom: 36,
+  },
+  wnCard: {
+    width: "100%",
+    backgroundColor: "#141418",
+    borderRadius: 24,
+    borderWidth: 0.6,
+    borderColor: "rgba(255,255,255,0.1)",
+    paddingHorizontal: 24,
+    paddingTop: 28,
+    paddingBottom: 24,
+    gap: 20,
+    overflow: "hidden",
+  },
+  wnHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  wnHeadline: {
+    fontFamily: Typography.display,
+    fontSize: 26,
+    color: Colors.textPrimary,
+    letterSpacing: -0.5,
+    flex: 1,
+  },
+  wnVersionBadge: {
+    backgroundColor: `${Colors.brand}33`,
+    borderRadius: 20,
+    borderWidth: 0.6,
+    borderColor: `${Colors.brand}66`,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  wnVersionText: {
+    fontFamily: Typography.sansMedium,
+    fontSize: 12,
+    color: Colors.brandLight,
+  },
+  wnItems: { gap: 16 },
+  wnItem: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 14,
+  },
+  wnItemIcon: {
+    fontSize: 20,
+    color: Colors.textSecondary,
+    width: 24,
+    textAlign: "center",
+    marginTop: 1,
+  },
+  wnItemText: { flex: 1, gap: 2 },
+  wnItemTitle: {
+    fontFamily: Typography.sansSemiBold,
+    fontSize: 14,
+    color: Colors.textPrimary,
+  },
+  wnItemBody: {
+    fontFamily: Typography.sans,
+    fontSize: 13,
+    color: Colors.textSecondary,
+    lineHeight: 19,
+  },
+  wnBtn: {
+    alignSelf: "stretch",
+    backgroundColor: Colors.brand,
+    borderRadius: 32,
+    paddingVertical: 14,
+    alignItems: "center",
+    marginTop: 4,
+  },
+  wnBtnText: {
+    fontFamily: Typography.sansSemiBold,
+    fontSize: 15,
+    color: "#fff",
+    letterSpacing: 0.2,
+  },
+
   scroll: { flex: 1 },
   content: {
     paddingHorizontal: Spacing.screen,
@@ -660,20 +842,8 @@ const styles = StyleSheet.create({
   moodGrid: {
     gap: Spacing.sm,
   },
-  supportRow: {
-    flexDirection: "row",
-    gap: Spacing.sm,
-  },
-  viewAllLink: {
-    alignSelf: "center",
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-  },
-  viewAllText: {
-    fontFamily: Typography.sans,
-    fontSize: 13,
-    color: Colors.textMuted,
-    letterSpacing: 0.3,
+  supportScroll: {
+    paddingBottom: 2,
   },
 
   rowContent: { paddingBottom: 4 },
@@ -702,6 +872,15 @@ const styles = StyleSheet.create({
     gap: 14,
     maxWidth: 360,
     width: "100%",
+    overflow: "hidden",
+  },
+  obIconGlow: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 120,
+    borderRadius: 24,
   },
   obIcon: {
     fontSize: 44,
@@ -729,6 +908,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 32,
     backgroundColor: "#8B1A2E",
+    overflow: "hidden",
   },
   obBtnText: {
     fontFamily: Typography.sansSemiBold,
@@ -761,11 +941,12 @@ const styles = StyleSheet.create({
 // ─── Continue card styles ──────────────────────────────────────────────────────
 const cwStyles = StyleSheet.create({
   card: {
-    width: 160,
-    height: 260,
+    width: 168,
+    height: 280,
     borderRadius: Radii.md,
     overflow: "hidden",
     backgroundColor: Colors.surfaceRaised,
+    marginRight: 12,
   },
   placeholder: {
     ...StyleSheet.absoluteFillObject,
@@ -783,10 +964,10 @@ const cwStyles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: 110,
+    height: 120,
     justifyContent: "flex-end",
-    paddingHorizontal: 10,
-    paddingBottom: 12,
+    paddingHorizontal: 11,
+    paddingBottom: 13,
     gap: 4,
   },
   title: {
@@ -802,15 +983,15 @@ const cwStyles = StyleSheet.create({
   },
   progressTrack: {
     flex: 1,
-    height: 4,
-    backgroundColor: "rgba(255,255,255,0.12)",
-    borderRadius: 2,
+    height: 5,
+    backgroundColor: "rgba(255,255,255,0.14)",
+    borderRadius: 3,
     overflow: "hidden",
   },
   progressFill: {
-    height: 4,
-    backgroundColor: Colors.brand,
-    borderRadius: 2,
+    height: 5,
+    backgroundColor: Colors.brandLight,
+    borderRadius: 3,
   },
   timeLeft: {
     fontFamily: Typography.sans,
@@ -820,20 +1001,18 @@ const cwStyles = StyleSheet.create({
   },
   resumeBadge: {
     position: "absolute",
-    top: 8,
-    right: 8,
-    backgroundColor: "rgba(0,0,0,0.62)",
+    top: 9,
+    right: 9,
     borderRadius: 20,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderWidth: 0.5,
-    borderColor: "rgba(255,255,255,0.12)",
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    overflow: "hidden",
   },
   resumeText: {
-    fontFamily: Typography.sans,
-    fontSize: 10,
+    fontFamily: Typography.sansMedium,
+    fontSize: 10.5,
     color: "#fff",
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
   },
 });
 

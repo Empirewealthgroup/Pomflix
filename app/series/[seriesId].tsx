@@ -4,16 +4,15 @@ import {
   ScrollView,
   StyleSheet,
   TouchableOpacity,
-  FlatList,
-  ActivityIndicator,
   Dimensions,
+  Animated,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
-import { SafeAreaView } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuthStore } from "@/lib/store/authStore";
 import {
   getItem,
@@ -28,7 +27,7 @@ import { Colors, Typography, Spacing, Radii } from "@/constants/theme";
 import EmptyState from "@/components/EmptyState";
 
 const { width } = Dimensions.get("window");
-const BACKDROP_HEIGHT = width * 0.5;
+const BACKDROP_H = Math.round(width * 0.52);
 
 export default function SeriesScreen() {
   const { seriesId } = useLocalSearchParams<{ seriesId: string }>();
@@ -41,6 +40,10 @@ export default function SeriesScreen() {
   const [episodes, setEpisodes] = useState<JellyfinItem[]>([]);
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [loadingEpisodes, setLoadingEpisodes] = useState(false);
+
+  // Entrance animation
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(20)).current;
 
   // Load series info + seasons
   useEffect(() => {
@@ -59,6 +62,10 @@ export default function SeriesScreen() {
         console.error(e);
       } finally {
         setLoadingMeta(false);
+        Animated.parallel([
+          Animated.timing(fadeAnim, { toValue: 1, duration: 420, useNativeDriver: true }),
+          Animated.spring(slideAnim, { toValue: 0, friction: 14, tension: 100, useNativeDriver: true }),
+        ]).start();
       }
     })();
   }, [seriesId]);
@@ -86,7 +93,7 @@ export default function SeriesScreen() {
   if (loadingMeta) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator color={Colors.textSecondary} />
+        <View style={styles.loadingDot} />
       </View>
     );
   }
@@ -101,29 +108,48 @@ export default function SeriesScreen() {
 
   return (
     <View style={styles.root}>
-      <ScrollView
+      <Animated.ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
+        style={{ opacity: fadeAnim }}
       >
         {/* Backdrop */}
-        <View style={[styles.backdropContainer, { height: BACKDROP_HEIGHT }]}>
-          {backdropUrl && (
+        <View style={[styles.backdropContainer, { height: BACKDROP_H }]}>
+          {backdropUrl ? (
             <Image
               source={{ uri: backdropUrl }}
               style={StyleSheet.absoluteFill}
               contentFit="cover"
-              transition={300}
+              transition={320}
             />
+          ) : (
+            <View style={[StyleSheet.absoluteFill, styles.backdropPlaceholder]} />
           )}
+          {/* Deep cinematic fade */}
           <LinearGradient
-            colors={["transparent", Colors.bg]}
-            start={{ x: 0, y: 0.35 }}
-            end={{ x: 0, y: 1 }}
+            colors={["transparent", "rgba(10,10,12,0.4)", Colors.bg]}
+            locations={[0.25, 0.62, 1]}
             style={StyleSheet.absoluteFill}
             pointerEvents="none"
           />
+          {/* Left vignette */}
+          <LinearGradient
+            colors={["rgba(10,10,12,0.38)", "transparent"]}
+            start={{ x: 0, y: 0.5 }}
+            end={{ x: 0.35, y: 0.5 }}
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+          />
+          {/* Warm shimmer */}
+          <LinearGradient
+            colors={["rgba(255,230,140,0.06)", "transparent"]}
+            style={[StyleSheet.absoluteFill, { height: 60 }]}
+            start={{ x: 0.2, y: 0 }}
+            end={{ x: 0.8, y: 1 }}
+            pointerEvents="none"
+          />
 
-          <SafeAreaView style={styles.backSafe}>
+          <SafeAreaView style={styles.backSafe} edges={["top"]}>
             <TouchableOpacity
               style={styles.backBtn}
               onPress={() => router.back()}
@@ -135,12 +161,25 @@ export default function SeriesScreen() {
         </View>
 
         {/* Header */}
-        <View style={styles.header}>
+        <Animated.View style={[styles.header, { transform: [{ translateY: slideAnim }] }]}>
           <Text style={styles.seriesTitle}>{series.Name}</Text>
-          {series.ProductionYear && (
-            <Text style={styles.seriesYear}>{series.ProductionYear}</Text>
-          )}
-        </View>
+          <View style={styles.metaRow}>
+            {series.ProductionYear ? (
+              <View style={styles.badge}><Text style={styles.badgeText}>{series.ProductionYear}</Text></View>
+            ) : null}
+            {series.OfficialRating ? (
+              <View style={styles.badge}><Text style={styles.badgeText}>{series.OfficialRating}</Text></View>
+            ) : null}
+            {series.CommunityRating ? (
+              <View style={[styles.badge, styles.badgeStar]}>
+                <Text style={[styles.badgeText, styles.badgeStarText]}>★ {series.CommunityRating.toFixed(1)}</Text>
+              </View>
+            ) : null}
+          </View>
+          {series.Overview ? (
+            <Text style={styles.seriesOverview} numberOfLines={4}>{series.Overview}</Text>
+          ) : null}
+        </Animated.View>
 
         {/* Season selector */}
         {seasons.length > 1 && (
@@ -174,7 +213,9 @@ export default function SeriesScreen() {
         {/* Episodes */}
         <View style={styles.episodesList}>
           {loadingEpisodes ? (
-            <ActivityIndicator color={Colors.textSecondary} style={{ marginTop: Spacing.xl }} />
+            <View style={styles.episodesLoading}>
+              <View style={styles.loadingDot} />
+            </View>
           ) : episodes.length === 0 ? (
             <EmptyState icon="◌" title="No episodes found." />
           ) : (
@@ -185,13 +226,13 @@ export default function SeriesScreen() {
                 serverUrl={serverUrl ?? ""}
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                  router.push(`/player/${ep.Id}`);
+                  router.push({ pathname: "/player/[itemId]", params: { itemId: ep.Id, itemName: ep.Name ?? "" } });
                 }}
               />
             ))
           )}
         </View>
-      </ScrollView>
+      </Animated.ScrollView>
     </View>
   );
 }
@@ -217,9 +258,10 @@ function EpisodeRow({
       ? `E${episode.IndexNumber}`
       : null;
   const progress = episode.UserData?.PlayedPercentage ?? 0;
+  const watched = episode.UserData?.Played ?? false;
 
   return (
-    <TouchableOpacity style={styles.epRow} onPress={onPress} activeOpacity={0.82}>
+    <TouchableOpacity style={styles.epRow} onPress={onPress} activeOpacity={0.8}>
       {/* Thumbnail */}
       <View style={styles.epThumb}>
         {thumbUrl ? (
@@ -233,15 +275,25 @@ function EpisodeRow({
           <View style={[StyleSheet.absoluteFill, styles.epThumbPlaceholder]} />
         )}
         {/* Progress bar on thumb */}
-        {progress > 0 && progress < 100 && (
+        {progress > 0 && progress < 99 && (
           <View style={styles.epProgressTrack}>
             <View style={[styles.epProgressBar, { width: `${progress}%` }]} />
           </View>
         )}
         {/* Play icon overlay */}
+        <LinearGradient
+          colors={["transparent", "rgba(0,0,0,0.5)"]}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
         <View style={styles.epPlayOverlay} pointerEvents="none">
           <Text style={styles.epPlayIcon}>▶</Text>
         </View>
+        {watched && (
+          <View style={styles.watchedBadge}>
+            <Text style={styles.watchedIcon}>✔</Text>
+          </View>
+        )}
       </View>
 
       {/* Info */}
@@ -252,7 +304,7 @@ function EpisodeRow({
             {episode.Name}
           </Text>
         </View>
-        {episode.RunTimeTicks && (
+        {!!episode.RunTimeTicks && (
           <Text style={styles.epMeta}>{formatRuntime(episode.RunTimeTicks)}</Text>
         )}
         {episode.Overview && (
@@ -268,18 +320,23 @@ function EpisodeRow({
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
   center: { flex: 1, backgroundColor: Colors.bg, alignItems: "center", justifyContent: "center" },
-  scroll: { paddingBottom: Spacing.xxl },
+  loadingDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.textMuted },
+  episodesLoading: { alignItems: "center", paddingTop: Spacing.xl },
+  scroll: { paddingBottom: 90 },
 
   backdropContainer: { width, overflow: "hidden" },
+  backdropPlaceholder: { backgroundColor: "#1A1A1E" },
   backSafe: { position: "absolute", top: 0, left: 0, right: 0 },
   backBtn: {
-    marginTop: Spacing.sm,
+    marginTop: Spacing.xs,
     marginLeft: Spacing.screen,
     alignSelf: "flex-start",
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.xs + 2,
+    paddingVertical: 7,
     borderRadius: Radii.full,
-    backgroundColor: "rgba(0,0,0,0.45)",
+    backgroundColor: "rgba(0,0,0,0.52)",
+    borderWidth: 0.5,
+    borderColor: "rgba(255,255,255,0.1)",
   },
   backText: {
     fontFamily: Typography.sansMedium,
@@ -289,20 +346,36 @@ const styles = StyleSheet.create({
 
   header: {
     paddingHorizontal: Spacing.screen,
-    gap: 4,
-    marginTop: -Spacing.md,
+    gap: 8,
+    marginTop: -Spacing.lg,
     marginBottom: Spacing.md,
   },
   seriesTitle: {
     fontFamily: Typography.displayBold,
-    fontSize: 24,
+    fontSize: 26,
     color: Colors.textPrimary,
-    letterSpacing: -0.4,
+    letterSpacing: -0.5,
+    lineHeight: 32,
   },
-  seriesYear: {
+  metaRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  badge: {
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderRadius: Radii.sm,
+    backgroundColor: "rgba(255,255,255,0.07)",
+    borderWidth: 0.5,
+    borderColor: "rgba(255,255,255,0.1)",
+  },
+  badgeStar: { backgroundColor: "rgba(180,60,30,0.18)", borderColor: "rgba(180,60,30,0.3)" },
+  badgeText: { fontFamily: Typography.sans, fontSize: 12, color: Colors.textSecondary },
+  badgeStarText: { color: "#E0905A" },
+  seriesOverview: {
     fontFamily: Typography.sans,
-    fontSize: 13,
+    fontSize: 14,
     color: Colors.textSecondary,
+    lineHeight: 21,
+    letterSpacing: 0.1,
+    marginTop: 4,
   },
 
   seasonScroll: { marginBottom: Spacing.md },
@@ -312,10 +385,10 @@ const styles = StyleSheet.create({
   },
   seasonTab: {
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.xs + 2,
+    paddingVertical: 7,
     borderRadius: Radii.full,
-    borderWidth: 1,
-    borderColor: Colors.surfaceBorder,
+    borderWidth: 0.6,
+    borderColor: "rgba(255,255,255,0.12)",
   },
   seasonTabActive: {
     backgroundColor: Colors.brand,
@@ -326,31 +399,33 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.textSecondary,
   },
-  seasonTabTextActive: {
-    color: Colors.textPrimary,
-  },
+  seasonTabTextActive: { color: "#fff" },
 
   episodesList: {
     paddingHorizontal: Spacing.screen,
     gap: Spacing.md,
+    paddingBottom: Spacing.xl,
   },
 
   epRow: {
     flexDirection: "row",
     gap: Spacing.md,
     alignItems: "flex-start",
+    paddingBottom: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(255,255,255,0.06)",
   },
   epThumb: {
-    width: 120,
-    height: 68,
+    width: 128,
+    height: 72,
     borderRadius: Radii.sm,
     backgroundColor: Colors.surfaceRaised,
     overflow: "hidden",
     flexShrink: 0,
+    borderWidth: 0.5,
+    borderColor: "rgba(255,255,255,0.07)",
   },
-  epThumbPlaceholder: {
-    backgroundColor: Colors.surfaceRaised,
-  },
+  epThumbPlaceholder: { backgroundColor: Colors.surfaceRaised },
   epProgressTrack: {
     position: "absolute",
     bottom: 0,
@@ -359,21 +434,25 @@ const styles = StyleSheet.create({
     height: 3,
     backgroundColor: "rgba(255,255,255,0.15)",
   },
-  epProgressBar: {
-    height: 3,
-    backgroundColor: Colors.brand,
-    borderRadius: 1,
-  },
+  epProgressBar: { height: 3, backgroundColor: Colors.brand, borderRadius: 1 },
   epPlayOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.25)",
   },
-  epPlayIcon: {
-    fontSize: 16,
-    color: "rgba(255,255,255,0.7)",
+  epPlayIcon: { fontSize: 14, color: "rgba(255,255,255,0.75)" },
+  watchedBadge: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "rgba(139,26,46,0.9)",
+    alignItems: "center",
+    justifyContent: "center",
   },
+  watchedIcon: { fontSize: 8, color: "#fff" },
   epInfo: {
     flex: 1,
     gap: 3,
