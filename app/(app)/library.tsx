@@ -24,6 +24,7 @@ import { useAuthStore } from "@/lib/store/authStore";
 import {
   getLibraryItems,
   getGenres,
+  getContinueWatching,
   getBackdropImageUrl,
   getPrimaryImageUrl,
   formatRuntime,
@@ -362,6 +363,114 @@ function CategoryRow({
   );
 }
 
+// --- Continue Watching row ----------------------------------------------------
+function ContinueRow({ items }: { items: JellyfinItem[] }) {
+  const { serverUrl } = useAuthStore();
+  const router = useRouter();
+  if (items.length === 0) return null;
+
+  return (
+    <View style={contStyles.section}>
+      <Text style={contStyles.label}>CONTINUE WATCHING</Text>
+      <FlatList
+        data={items}
+        keyExtractor={(i) => i.Id}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={contStyles.row}
+        ItemSeparatorComponent={() => <View style={{ width: Spacing.sm }} />}
+        renderItem={({ item }) => {
+          const imageUrl = serverUrl && item.ImageTags?.Primary
+            ? getPrimaryImageUrl(serverUrl, item.Id, item.ImageTags.Primary, Math.round(ROW_CARD_W * 2))
+            : undefined;
+          const pct = item.UserData?.PlayedPercentage ?? 0;
+          const handlePress = () => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            if (item.Type === "Series") {
+              router.push({ pathname: "/series/[seriesId]", params: { seriesId: item.Id } });
+            } else {
+              router.push({ pathname: "/player/[itemId]", params: { itemId: item.Id, itemName: item.Name ?? "" } });
+            }
+          };
+          return (
+            <TouchableOpacity onPress={handlePress} activeOpacity={0.85} style={{ width: ROW_CARD_W }}>
+              <View style={contStyles.card}>
+                {imageUrl
+                  ? <Image source={{ uri: imageUrl }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
+                  : <View style={[StyleSheet.absoluteFill, { backgroundColor: Colors.surfaceRaised }]} />
+                }
+                <LinearGradient
+                  colors={["transparent", "rgba(10,10,12,0.82)"]}
+                  style={contStyles.grad}
+                  pointerEvents="none"
+                />
+                {pct > 2 && pct < 98 && (
+                  <View style={contStyles.progressTrack}>
+                    <View style={[contStyles.progressFill, { width: `${pct}%` as any }]} />
+                  </View>
+                )}
+              </View>
+              <Text style={contStyles.title} numberOfLines={2}>{item.Name}</Text>
+              {!!item.ParentIndexNumber && !!item.IndexNumber && (
+                <Text style={contStyles.episode}>S{item.ParentIndexNumber} E{item.IndexNumber}</Text>
+              )}
+            </TouchableOpacity>
+          );
+        }}
+      />
+    </View>
+  );
+}
+const contStyles = StyleSheet.create({
+  section: {
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.xs,
+  },
+  label: {
+    fontFamily: Typography.sansMedium,
+    fontSize: 11,
+    color: "rgba(255,255,255,0.38)",
+    letterSpacing: 1.2,
+    marginBottom: Spacing.sm,
+    paddingHorizontal: Spacing.screen,
+  },
+  row: { paddingHorizontal: Spacing.screen },
+  card: {
+    width: ROW_CARD_W,
+    height: ROW_CARD_H,
+    borderRadius: Radii.md,
+    overflow: "hidden",
+    backgroundColor: Colors.surfaceRaised,
+  },
+  grad: { ...StyleSheet.absoluteFillObject },
+  progressTrack: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
+  progressFill: {
+    height: "100%",
+    backgroundColor: Colors.brand,
+    borderRadius: 2,
+  },
+  title: {
+    fontFamily: Typography.sansMedium,
+    fontSize: 11,
+    color: Colors.textSecondary,
+    marginTop: 5,
+    lineHeight: 14,
+  },
+  episode: {
+    fontFamily: Typography.sans,
+    fontSize: 10,
+    color: "rgba(255,255,255,0.38)",
+    marginTop: 2,
+  },
+});
+
 // --- Search result card -------------------------------------------------------
 function SearchCard({ item }: { item: JellyfinItem }) {
   const { serverUrl } = useAuthStore();
@@ -436,6 +545,17 @@ export default function LibraryScreen() {
   const [searchLoading, setSearchLoading] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+
+  const [continueItems, setContinueItems] = useState<JellyfinItem[]>([]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!serverUrl || !token || !userId) return;
+      getContinueWatching(serverUrl, token, userId, 12)
+        .then(setContinueItems)
+        .catch(() => {});
+    }, [serverUrl, token, userId])
+  );
 
   const scrollY = useRef(new Animated.Value(0)).current;
   const featuredScrollX = useRef(new Animated.Value(0)).current;
@@ -581,7 +701,10 @@ export default function LibraryScreen() {
       showsGenresLoaded.current = false;
       setShowsGenres(null);
     }
-    await loadTab(activeTab).catch(() => {});
+    await Promise.all([
+      loadTab(activeTab).catch(() => {}),
+      getContinueWatching(serverUrl, token, userId, 12).then(setContinueItems).catch(() => {}),
+    ]);
     setRefreshing(false);
   };
 
@@ -646,10 +769,11 @@ export default function LibraryScreen() {
             />
           </View>
         )}
+        <ContinueRow items={continueItems} />
         <Text style={styles.sectionLabel}>{sectionLabel}</Text>
       </View>
     );
-  }, [tabLoading, featuredItems, sectionLabel, featuredScrollX]);
+  }, [tabLoading, featuredItems, sectionLabel, featuredScrollX, continueItems]);
 
   const TabBar = (
     <ScrollView
@@ -733,14 +857,17 @@ export default function LibraryScreen() {
                 ))}
               </View>
             ) : (
-              (activeTab === "movies" ? moviesGenres ?? [] : showsGenres ?? []).map((g) => (
-                <CategoryRow
-                  key={g.Id}
-                  genreId={g.Id}
-                  genreName={g.Name}
-                  type={activeTab === "movies" ? "Movie" : "Series"}
-                />
-              ))
+              <>
+                <ContinueRow items={continueItems} />
+                {(activeTab === "movies" ? moviesGenres ?? [] : showsGenres ?? []).map((g) => (
+                  <CategoryRow
+                    key={g.Id}
+                    genreId={g.Id}
+                    genreName={g.Name}
+                    type={activeTab === "movies" ? "Movie" : "Series"}
+                  />
+                ))}
+              </>
             )}
           </ScrollView>
         ) : (

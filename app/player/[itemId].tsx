@@ -31,6 +31,7 @@ import type { JellyfinItem } from "@/lib/jellyfin/types";
 import { Colors, Typography } from "@/constants/theme";
 import { useNowPlayingStore } from "@/lib/store/nowPlayingStore";
 import { useFeedbackStore, type FeedbackRating } from "@/lib/store/feedbackStore";
+import { useSettingsStore } from "@/lib/store/settingsStore";
 
 const { width, height } = Dimensions.get("window");
 
@@ -46,6 +47,9 @@ export default function PlayerScreen() {
   const { updateSessionItem, currentSession } = useSessionStore();
   const { setNowPlaying, updateNowPlayingProgress, clearNowPlaying } = useNowPlayingStore();
   const { setFeedback } = useFeedbackStore();
+  const { prefs, loadPrefs } = useSettingsStore();
+
+  useEffect(() => { if (userId) loadPrefs(userId); }, [userId]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -281,9 +285,9 @@ export default function PlayerScreen() {
     return () => { if (progressTimer.current) clearInterval(progressTimer.current); };
   }, [streamUrl]);
 
-  // Auto-navigate to next episode when countdown hits 0
+  // Auto-navigate to next episode when countdown hits 0 (only if autoplay is on)
   useEffect(() => {
-    if (nextEpisodeCountdown === 0 && nextEpisode && showNextEpisode) {
+    if (nextEpisodeCountdown === 0 && nextEpisode && showNextEpisode && prefs.autoplayNextEpisode) {
       stopAndReport();
       router.replace(`/player/${nextEpisode.Id}?name=${encodeURIComponent(nextEpisode.Name ?? "")}`);
     }
@@ -585,7 +589,7 @@ export default function PlayerScreen() {
                       }}
                     >
                       <Text style={styles.nextEpPlayText}>
-                        {nextEpisodeCountdown > 0 ? `Play (${nextEpisodeCountdown})` : "Play Now"}
+                        {prefs.autoplayNextEpisode && nextEpisodeCountdown > 0 ? `Play (${nextEpisodeCountdown})` : "Play Now"}
                       </Text>
                     </TouchableOpacity>
                     <TouchableOpacity

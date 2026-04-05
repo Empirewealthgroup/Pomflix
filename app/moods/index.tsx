@@ -14,6 +14,8 @@ import * as Haptics from "expo-haptics";
 import { MODES, MOOD_CATEGORIES } from "@/constants/modes";
 import type { Mode } from "@/constants/modes";
 import { useSessionStore } from "@/lib/store/sessionStore";
+import { useAuthStore } from "@/lib/store/authStore";
+import { useSettingsStore } from "@/lib/store/settingsStore";
 import { Colors, Typography, Spacing, Radii } from "@/constants/theme";
 import { LinearGradient } from "expo-linear-gradient";
 
@@ -55,7 +57,20 @@ function MoodRow({ mode, onPress }: { mode: Mode; onPress: () => void }) {
 export default function MoodsScreen() {
   const router = useRouter();
   const { recentMoodIds } = useSessionStore();
+  const { userName, userId } = useAuthStore();
+  const { prefs, loadPrefs } = useSettingsStore();
   const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => { if (userId) loadPrefs(userId); }, [userId]);
+
+  const initial = userName?.[0]?.toUpperCase() ?? "?";
+  const AVATAR_PALETTE = ["#8B1A2E","#4A90C4","#9B7FD4","#2AB09A","#E07030","#C05080"];
+  const avatarBg = (() => {
+    if (!userId) return AVATAR_PALETTE[0];
+    let h = 0;
+    for (let i = 0; i < userId.length; i++) h = userId.charCodeAt(i) + ((h << 5) - h);
+    return AVATAR_PALETTE[Math.abs(h) % AVATAR_PALETTE.length];
+  })();
 
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 320, useNativeDriver: true }).start();
@@ -87,7 +102,12 @@ export default function MoodsScreen() {
             <Text style={styles.backText}>← Back</Text>
           </TouchableOpacity>
           <Text style={styles.title}>All Moods</Text>
-          <View style={{ width: 60 }} />
+          <LinearGradient colors={[avatarBg, "#7A1525"]} style={styles.avatarBubble}>
+            {prefs.avatarEmoji
+              ? <Text style={styles.avatarEmoji}>{prefs.avatarEmoji}</Text>
+              : <Text style={styles.avatarLetter}>{initial}</Text>
+            }
+          </LinearGradient>
         </View>
 
         <ScrollView
@@ -145,6 +165,21 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     textAlign: "center",
     letterSpacing: -0.5,
+  },
+  avatarBubble: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarLetter: {
+    fontFamily: Typography.sansSemiBold,
+    fontSize: 15,
+    color: "#fff",
+  },
+  avatarEmoji: {
+    fontSize: 18,
   },
   content: {
     paddingHorizontal: Spacing.screen,

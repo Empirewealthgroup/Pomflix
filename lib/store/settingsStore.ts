@@ -6,6 +6,10 @@ const KEY = (userId: string) => `pom_prefs_${userId}`;
 
 export type FeedbackSensitivity = "strict" | "relaxed";
 
+export const AVATAR_EMOJIS = [
+  "🎬", "🍿", "🎭", "🎥", "🦊", "🐺", "🌙", "⚡", "🔥", "💀", "🤖", "👾",
+];
+
 export type UserPrefs = {
   /** null = no global cap; otherwise cap in minutes */
   maxRuntimeMinutes: number | null;
@@ -15,6 +19,10 @@ export type UserPrefs = {
   pinnedMoodIds: ModeId[];
   /** Moods hidden from suggestions and View All */
   hiddenMoodIds: ModeId[];
+  /** Emoji avatar — null means show initials */
+  avatarEmoji: string | null;
+  /** Auto-play next episode when countdown ends */
+  autoplayNextEpisode: boolean;
 };
 
 const DEFAULT_PREFS: UserPrefs = {
@@ -22,6 +30,8 @@ const DEFAULT_PREFS: UserPrefs = {
   feedbackSensitivity: "strict",
   pinnedMoodIds: [],
   hiddenMoodIds: [],
+  avatarEmoji: null,
+  autoplayNextEpisode: true,
 };
 
 type SettingsState = {

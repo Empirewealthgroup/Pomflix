@@ -10,6 +10,7 @@ import {
   Animated,
   Pressable,
   Dimensions,
+  Switch,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -19,7 +20,7 @@ import { useAuthStore } from "@/lib/store/authStore";
 import { useSessionStore } from "@/lib/store/sessionStore";
 import { useFeedbackStore } from "@/lib/store/feedbackStore";
 import { useOnboardingStore } from "@/lib/store/onboardingStore";
-import { useSettingsStore } from "@/lib/store/settingsStore";
+import { useSettingsStore, AVATAR_EMOJIS } from "@/lib/store/settingsStore";
 import { useNowPlayingStore } from "@/lib/store/nowPlayingStore";
 import { Typography } from "@/constants/theme";
 
@@ -106,6 +107,115 @@ function PickerSheet<T>({ visible, title, options, current, onSelect, onClose }:
   );
 }
 
+// --- AvatarPickerSheet -------------------------------------------------------
+interface AvatarPickerSheetProps {
+  visible: boolean;
+  current: string | null;
+  onSelect: (emoji: string | null) => void;
+  onClose: () => void;
+}
+function AvatarPickerSheet({ visible, current, onSelect, onClose }: AvatarPickerSheetProps) {
+  const insets = useSafeAreaInsets();
+  const slideAnim = useRef(new Animated.Value(400)).current;
+  const backdropAnim = useRef(new Animated.Value(0)).current;
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true);
+      Animated.parallel([
+        Animated.spring(slideAnim, { toValue: 0, friction: 18, tension: 140, useNativeDriver: true }),
+        Animated.timing(backdropAnim, { toValue: 1, duration: 220, useNativeDriver: true }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(slideAnim, { toValue: 400, duration: 200, useNativeDriver: true }),
+        Animated.timing(backdropAnim, { toValue: 0, duration: 180, useNativeDriver: true }),
+      ]).start(() => setMounted(false));
+    }
+  }, [visible]);
+
+  if (!mounted) return null;
+
+  return (
+    <Modal transparent animationType="none" visible statusBarTranslucent onRequestClose={onClose}>
+      <Animated.View style={[ps.backdrop, { opacity: backdropAnim }]}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      </Animated.View>
+      <Animated.View style={[av.sheet, { transform: [{ translateY: slideAnim }], paddingBottom: insets.bottom + 24 }]}>
+        <View style={ps.handle} />
+        <Text style={ps.sheetTitle}>Choose Avatar</Text>
+        {/* Initials option */}
+        <TouchableOpacity
+          style={[av.emojiBtn, current === null && av.emojiBtnActive]}
+          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onSelect(null); onClose(); }}
+        >
+          <Text style={av.emojiInitials}>A B C</Text>
+          <Text style={av.emojiLabel}>Initials</Text>
+        </TouchableOpacity>
+        <View style={av.grid}>
+          {AVATAR_EMOJIS.map((emoji) => (
+            <TouchableOpacity
+              key={emoji}
+              style={[av.emojiBtn, current === emoji && av.emojiBtnActive]}
+              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onSelect(emoji); onClose(); }}
+            >
+              <Text style={av.emoji}>{emoji}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </Animated.View>
+    </Modal>
+  );
+}
+const av = StyleSheet.create({
+  sheet: {
+    position: "absolute",
+    bottom: 0, left: 0, right: 0,
+    backgroundColor: "#16161A",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderWidth: 1,
+    borderColor: BORDER,
+    paddingTop: 12,
+    zIndex: 11,
+    paddingHorizontal: 20,
+  },
+  grid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 12,
+  },
+  emojiBtn: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "transparent",
+  },
+  emojiBtnActive: {
+    borderColor: RED_LIGHT,
+    backgroundColor: `${RED}22`,
+  },
+  emoji: { fontSize: 28 },
+  emojiInitials: {
+    fontSize: 11,
+    color: TEXT2,
+    fontFamily: Typography.sansSemiBold,
+    letterSpacing: 1.5,
+  },
+  emojiLabel: {
+    fontSize: 9,
+    color: TEXT3,
+    fontFamily: Typography.sans,
+    marginTop: 2,
+  },
+});
+
 // --- ProfileSheet -----------------------------------------------------------
 interface ProfileSheetProps {
   visible: boolean;
@@ -115,9 +225,10 @@ interface ProfileSheetProps {
   serverUrl: string | null;
   avatarColor: string;
   avatarInitial: string;
+  avatarEmoji: string | null;
   nowPlaying: string | null;
 }
-function ProfileSheet({ visible, onClose, userName, userId, serverUrl, avatarColor: aColor, avatarInitial, nowPlaying }: ProfileSheetProps) {
+function ProfileSheet({ visible, onClose, userName, userId, serverUrl, avatarColor: aColor, avatarInitial, avatarEmoji, nowPlaying }: ProfileSheetProps) {
   const insets = useSafeAreaInsets();
   const slideAnim = useRef(new Animated.Value(500)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
@@ -174,7 +285,10 @@ function ProfileSheet({ visible, onClose, userName, userId, serverUrl, avatarCol
               start={{ x: 0, y: 1 }} end={{ x: 1, y: 0 }}
               pointerEvents="none"
             />
-            <Text style={pf.avatarLetter}>{avatarInitial}</Text>
+            {avatarEmoji
+              ? <Text style={pf.avatarEmoji}>{avatarEmoji}</Text>
+              : <Text style={pf.avatarLetter}>{avatarInitial}</Text>
+            }
           </LinearGradient>
           <View style={pf.heroText}>
             <Text style={pf.heroName}>{userName ?? "Unknown"}</Text>
@@ -249,6 +363,9 @@ const pf = StyleSheet.create({
     fontFamily: Typography.displayBold,
     fontSize: 20,
     color: "#fff",
+  },
+  avatarEmoji: {
+    fontSize: 24,
   },
   heroText: { gap: 3 },
   heroName: {
@@ -377,6 +494,7 @@ export default function SettingsScreen() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [runtimeOpen, setRuntimeOpen] = useState(false);
   const [sensitivityOpen, setSensitivityOpen] = useState(false);
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
 
   // Mount anim
   const mountAnim = useRef(new Animated.Value(0)).current;
@@ -514,10 +632,13 @@ export default function SettingsScreen() {
                 end={{ x: 1, y: 0 }}
                 pointerEvents="none"
               />
-              <Text style={s.avatarLetter}>{initial}</Text>
+              {prefs.avatarEmoji
+                ? <Text style={s.avatarEmoji}>{prefs.avatarEmoji}</Text>
+                : <Text style={s.avatarLetter}>{initial}</Text>
+              }
             </LinearGradient>
           </View>
-          <View style={s.profileText}>
+          <View style={{ flex: 1, gap: 5 }}>
             <Text style={s.profileName}>{userName ?? "Unknown"}</Text>
             <Text style={s.profileRole}>Tap to view profile</Text>
           </View>
@@ -526,6 +647,23 @@ export default function SettingsScreen() {
 
         {/* ── Preferences ─────────────────────────────────────────── */}
         <Section title="PREFERENCES">
+          <SettingsRow
+            title="Avatar"
+            subtitle="Pick an emoji for your profile"
+            value={prefs.avatarEmoji ?? "A B C"}
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setAvatarPickerOpen(true); }}
+          />
+          <Divider />
+          <SettingsRow
+            title="Autoplay next episode"
+            subtitle={prefs.autoplayNextEpisode ? "Plays next episode automatically" : "Shows card, waits for you to tap"}
+            value={prefs.autoplayNextEpisode ? "On" : "Off"}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              if (userId) updatePrefs(userId, { autoplayNextEpisode: !prefs.autoplayNextEpisode });
+            }}
+          />
+          <Divider />
           <SettingsRow
             title="Max runtime"
             subtitle="Limits how long suggested content can be"
@@ -612,6 +750,7 @@ export default function SettingsScreen() {
         serverUrl={serverUrl}
         avatarColor={color}
         avatarInitial={initial}
+        avatarEmoji={prefs.avatarEmoji}
         nowPlaying={nowPlaying?.itemName ?? null}
       />
 
@@ -633,6 +772,14 @@ export default function SettingsScreen() {
         current={prefs.feedbackSensitivity}
         onSelect={(v) => userId && updatePrefs(userId, { feedbackSensitivity: v })}
         onClose={() => setSensitivityOpen(false)}
+      />
+
+      {/* ── Avatar picker ──────────────────────────────────────────── */}
+      <AvatarPickerSheet
+        visible={avatarPickerOpen}
+        current={prefs.avatarEmoji}
+        onSelect={(emoji) => userId && updatePrefs(userId, { avatarEmoji: emoji })}
+        onClose={() => setAvatarPickerOpen(false)}
       />
     </SafeAreaView>
   );
@@ -709,7 +856,9 @@ const s = StyleSheet.create({
     fontSize: 22,
     color: "#fff",
   },
-  profileText: { gap: 5 },
+  avatarEmoji: {
+    fontSize: 28,
+  },
   profileName: {
     fontFamily: Typography.display,
     fontSize: 22,
