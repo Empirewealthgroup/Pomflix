@@ -26,6 +26,7 @@ import {
   reportPlaybackProgress,
   reportPlaybackStopped,
   formatRuntime,
+  setFavorite,
 } from "@/lib/jellyfin/media";
 import type { JellyfinItem } from "@/lib/jellyfin/types";
 import { Colors, Typography } from "@/constants/theme";
@@ -76,6 +77,8 @@ export default function PlayerScreen() {
   const [trackSheet, setTrackSheet] = useState<"audio" | "subtitle" | null>(null);
   const [showOptionsSheet, setShowOptionsSheet] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [heartFavorite, setHeartFavorite] = useState(false);
+  const togglingHeartRef = useRef(false);
   const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2];
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -86,6 +89,26 @@ export default function PlayerScreen() {
   // Options sheet animations
   const optionsSheetSlide = useRef(new Animated.Value(400)).current;
   const optionsSheetFade = useRef(new Animated.Value(0)).current;
+
+  // Sync heart state when itemMeta loads
+  useEffect(() => {
+    setHeartFavorite(itemMeta?.UserData?.IsFavorite ?? false);
+  }, [itemMeta]);
+
+  const handleToggleHeart = async () => {
+    if (!serverUrl || !token || !userId || !itemId || togglingHeartRef.current) return;
+    togglingHeartRef.current = true;
+    const next = !heartFavorite;
+    setHeartFavorite(next);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    try {
+      await setFavorite(serverUrl, token, userId, itemId, next);
+    } catch {
+      setHeartFavorite(!next);
+    } finally {
+      togglingHeartRef.current = false;
+    }
+  };
 
   // Track actual watch duration
   const watchStartTime = useRef<number>(0);
@@ -539,6 +562,15 @@ export default function PlayerScreen() {
                 hitSlop={12}
               >
                 <Text style={styles.optionsBtnText}>⋯</Text>
+              </TouchableOpacity>
+
+              {/* Heart / favorite button */}
+              <TouchableOpacity
+                style={styles.heartBtn}
+                onPress={handleToggleHeart}
+                hitSlop={12}
+              >
+                <Text style={styles.heartBtnText}>{heartFavorite ? "♥" : "♡"}</Text>
               </TouchableOpacity>
 
               {/* Skip Intro / Skip Credits */}
@@ -1105,6 +1137,25 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     lineHeight: 18,
     letterSpacing: 2,
+  },
+
+  // ── Heart button (top-right, left of options) ──────────────────
+  heartBtn: {
+    position: "absolute",
+    top: 52,
+    right: 78,
+    backgroundColor: "rgba(0,0,0,0.52)",
+    borderRadius: 22,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 0.5,
+    borderColor: "rgba(255,255,255,0.12)",
+    zIndex: 10,
+  },
+  heartBtnText: {
+    fontSize: 17,
+    color: Colors.textPrimary,
+    lineHeight: 18,
   },
 
   // ── Options sheet sections ─────────────────────────────────

@@ -25,10 +25,12 @@ import {
   getLibraryItems,
   getGenres,
   getContinueWatching,
+  getFavorites,
   getBackdropImageUrl,
   getPrimaryImageUrl,
   formatRuntime,
 } from "@/lib/jellyfin/media";
+import CardContextSheet from "@/components/CardContextSheet";
 import type { JellyfinItem, JellyfinGenre } from "@/lib/jellyfin/types";
 import { Colors, Typography, Spacing, Radii } from "@/constants/theme";
 import SkeletonCard from "@/components/SkeletonCard";
@@ -53,9 +55,10 @@ const TABS = [
   { id: "shows" as const, label: "TV Shows" },
   { id: "new" as const, label: "New" },
   { id: "trending" as const, label: "Trending" },
+  { id: "saved" as const, label: "Saved" },
 ] as const;
 
-type Tab = "movies" | "shows" | "new" | "trending";
+type Tab = "movies" | "shows" | "new" | "trending" | "saved";
 
 // --- Navigate helper ----------------------------------------------------------
 function useNavigate() {
@@ -164,7 +167,7 @@ function FeaturedCard({ item, scrollX, index }: { item: JellyfinItem; scrollX: A
 }
 
 // --- Poster grid card ---------------------------------------------------------
-function PosterCard({ item }: { item: JellyfinItem }) {
+function PosterCard({ item, onLongPress }: { item: JellyfinItem; onLongPress?: (item: JellyfinItem) => void }) {
   const { serverUrl } = useAuthStore();
   const navigate = useNavigate();
   const scale = useRef(new Animated.Value(1)).current;
@@ -200,6 +203,11 @@ function PosterCard({ item }: { item: JellyfinItem }) {
       onPressIn={onPressIn}
       onPressOut={onPressOut}
       onPress={() => navigate(item)}
+      onLongPress={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        onLongPress?.(item);
+      }}
+      delayLongPress={380}
     >
       <Animated.View style={{ transform: [{ scale }] }}>
         <View style={posterStyles.poster}>
@@ -233,7 +241,7 @@ function PosterCard({ item }: { item: JellyfinItem }) {
 }
 
 // --- Row card (poster card used inside CategoryRow) --------------------------
-function RowCard({ item }: { item: JellyfinItem }) {
+function RowCard({ item, onLongPress }: { item: JellyfinItem; onLongPress?: (item: JellyfinItem) => void }) {
   const { serverUrl } = useAuthStore();
   const router = useRouter();
   const scale = useRef(new Animated.Value(1)).current;
@@ -262,6 +270,11 @@ function RowCard({ item }: { item: JellyfinItem }) {
       onPress={handlePress}
       onPressIn={pressIn}
       onPressOut={pressOut}
+      onLongPress={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        onLongPress?.(item);
+      }}
+      delayLongPress={380}
       activeOpacity={1}
       style={{ width: ROW_CARD_W }}
     >
@@ -299,10 +312,12 @@ function CategoryRow({
   genreId,
   genreName,
   type,
+  onLongPress,
 }: {
   genreId: string;
   genreName: string;
   type: "Movie" | "Series";
+  onLongPress?: (item: JellyfinItem) => void;
 }) {
   const { serverUrl, token, userId } = useAuthStore();
   const router = useRouter();
@@ -356,7 +371,7 @@ function CategoryRow({
           decelerationRate="fast"
           snapToInterval={ROW_CARD_W + Spacing.sm}
           ItemSeparatorComponent={() => <View style={{ width: Spacing.sm }} />}
-          renderItem={({ item }) => <RowCard item={item} />}
+          renderItem={({ item }) => <RowCard item={item} onLongPress={onLongPress} />}
         />
       )}
     </View>
@@ -548,6 +563,14 @@ export default function LibraryScreen() {
 
   const [continueItems, setContinueItems] = useState<JellyfinItem[]>([]);
 
+  // Context sheet (long-press)
+  const [contextItem, setContextItem] = useState<JellyfinItem | null>(null);
+
+  // Saved / favorites
+  const [savedItems, setSavedItems] = useState<JellyfinItem[]>([]);
+  const [savedLoading, setSavedLoading] = useState(false);
+  const savedLoaded = useRef(false);
+
   useFocusEffect(
     useCallback(() => {
       if (!serverUrl || !token || !userId) return;
@@ -631,6 +654,22 @@ export default function LibraryScreen() {
       }
 
       // new / trending — flat poster grid
+      if (tab === "saved") {
+        if (savedLoaded.current) return;
+        savedLoaded.current = true;
+        setSavedLoading(true);
+        try {
+          const items = await getFavorites(serverUrl, token, userId);
+          setSavedItems(items);
+        } catch {
+          setSavedItems([]);
+        } finally {
+          setSavedLoading(false);
+        }
+        return;
+      }
+
+      // new / trending — flat poster grid
       setTabLoading(true);
       setTabItems([]);
       try {
@@ -700,6 +739,8 @@ export default function LibraryScreen() {
     } else if (activeTab === "shows") {
       showsGenresLoaded.current = false;
       setShowsGenres(null);
+    } else if (activeTab === "saved") {
+      savedLoaded.current = false;
     }
     await Promise.all([
       loadTab(activeTab).catch(() => {}),
@@ -865,13 +906,49 @@ export default function LibraryScreen() {
                     genreId={g.Id}
                     genreName={g.Name}
                     type={activeTab === "movies" ? "Movie" : "Series"}
+                    onLongPress={(item) => setContextItem(item)}
                   />
                 ))}
               </>
             )}
           </ScrollView>
         ) : (
-          // Flat grid for New / Trending
+          // Flat grid for New / Trending / Saved
+          activeTab === "saved" ? (
+            <FlatList
+              data={savedLoading ? [] : savedItems}
+              keyExtractor={(item) => item.Id}
+              numColumns={COLS}
+              contentContainerStyle={styles.gridContent}
+              columnWrapperStyle={styles.gridRow}
+              showsVerticalScrollIndicator={false}
+              scrollEventThrottle={16}
+              onScroll={Animated.event(
+                [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                { useNativeDriver: false }
+              )}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={handleRefresh}
+                  tintColor={Colors.brandLight}
+                  colors={[Colors.brand]}
+                />
+              }
+              ListEmptyComponent={
+                !savedLoading ? (
+                  <View style={styles.savedEmpty}>
+                    <Text style={styles.savedEmptyIcon}>♡</Text>
+                    <Text style={styles.savedEmptyTitle}>Nothing saved yet</Text>
+                    <Text style={styles.savedEmptyBody}>
+                      Long-press any title to add it to your Watchlist
+                    </Text>
+                  </View>
+                ) : null
+              }
+              renderItem={({ item }) => <PosterCard item={item} onLongPress={(i) => setContextItem(i)} />}
+            />
+          ) : (
           <FlatList
             data={tabLoading ? [] : tabItems}
             keyExtractor={(item) => item.Id}
@@ -893,8 +970,9 @@ export default function LibraryScreen() {
               />
             }
             ListHeaderComponent={ListHeader}
-            renderItem={({ item }) => <PosterCard item={item} />}
+            renderItem={({ item }) => <PosterCard item={item} onLongPress={(i) => setContextItem(i)} />}
           />
+          )
         )}
       </Animated.View>
 
@@ -988,6 +1066,21 @@ export default function LibraryScreen() {
           )}
         </BlurView>
       </Modal>
+
+      {/* Context sheet — long-press on any card */}
+      <CardContextSheet
+        item={contextItem}
+        onClose={() => setContextItem(null)}
+        onFavoriteChange={(itemId, isFav) => {
+          // If on Saved tab, refresh on unfavorite
+          if (!isFav && activeTab === "saved") {
+            setSavedItems((prev) => prev.filter((i) => i.Id !== itemId));
+          } else if (isFav && activeTab === "saved") {
+            savedLoaded.current = false;
+            loadTab("saved");
+          }
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -1094,6 +1187,31 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surfaceRaised,
   },
   genreSkelRow: { flexDirection: "row", gap: Spacing.sm },
+
+  savedEmpty: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: 80,
+    gap: 12,
+  },
+  savedEmptyIcon: {
+    fontSize: 48,
+    color: "rgba(255,255,255,0.15)",
+  },
+  savedEmptyTitle: {
+    fontFamily: Typography.sansSemiBold,
+    fontSize: 17,
+    color: Colors.textPrimary,
+  },
+  savedEmptyBody: {
+    fontFamily: Typography.sans,
+    fontSize: 13,
+    color: Colors.textSecondary,
+    textAlign: "center",
+    paddingHorizontal: 40,
+    lineHeight: 19,
+  },
 });
 
 const catStyles = StyleSheet.create({

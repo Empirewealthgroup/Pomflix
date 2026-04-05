@@ -444,6 +444,46 @@ export async function getItem(
   );
 }
 
+// ── Favorites / Watchlist ─────────────────────────────────────────────────
+
+export async function getFavorites(
+  serverUrl: string,
+  token: string,
+  userId: string
+): Promise<JellyfinItem[]> {
+  const res = await jellyfinFetch<JellyfinItemsResponse>(
+    serverUrl,
+    `/Users/${userId}/Items`,
+    {
+      token,
+      params: {
+        Filters: "IsFavorite",
+        IncludeItemTypes: "Movie,Series",
+        Recursive: true,
+        Fields: FIELDS,
+        EnableImageTypes: "Primary,Backdrop,Thumb",
+        SortBy: "DateCreated",
+        SortOrder: "Descending",
+      },
+    }
+  );
+  return res.Items ?? [];
+}
+
+export async function setFavorite(
+  serverUrl: string,
+  token: string,
+  userId: string,
+  itemId: string,
+  favorite: boolean
+): Promise<void> {
+  await jellyfinFetch<unknown>(
+    serverUrl,
+    `/Users/${userId}/FavoriteItems/${itemId}`,
+    { method: favorite ? "POST" : "DELETE", token }
+  );
+}
+
 export async function getSimilarItems(
   serverUrl: string,
   token: string,

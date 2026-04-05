@@ -27,6 +27,7 @@ import { SkeletonRow } from "@/components/SkeletonCard";
 import { useSettingsStore } from "@/lib/store/settingsStore";
 import { useWhatsNewStore, WHATS_NEW_ITEMS } from "@/lib/store/whatsNewStore";
 import type { JellyfinItem } from "@/lib/jellyfin/types";
+import CardContextSheet from "@/components/CardContextSheet";
 
 // ─── Session-persisted last-used mode ────────────────────────────────────────
 let _lastUsedModeId: string | null = null;
@@ -77,7 +78,7 @@ function getTimeMoods(): TimeMoods {
   return { glowColor: "#4A6FA0", heroMoodId: "drift", supportMoodIds: ["calm", "reflect", "wind_down"] };
 }
 // ─── Continue watching card ───────────────────────────────────────────────────
-function ContinueCard({ item }: { item: JellyfinItem }) {
+function ContinueCard({ item, onLongPress }: { item: JellyfinItem; onLongPress?: (item: JellyfinItem) => void }) {
   const { serverUrl } = useAuthStore();
   const router = useRouter();
   const CARD_W = 168;
@@ -107,6 +108,11 @@ function ContinueCard({ item }: { item: JellyfinItem }) {
           },
         });
       }}
+      onLongPress={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        onLongPress?.(item);
+      }}
+      delayLongPress={380}
       activeOpacity={0.84}
     >
       <View style={cwStyles.card}>
@@ -222,6 +228,7 @@ export default function HomeScreen() {
   const [loadingContinue, setLoadingContinue] = useState(true);
   const [continueError, setContinueError] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [contextItem, setContextItem] = useState<JellyfinItem | null>(null);
   const [lastUsedModeId, setLastUsedModeId] = useState<string | null>(_lastUsedModeId);
   const [showOnboarding, setShowOnboarding] = useState(false);
 
@@ -595,7 +602,9 @@ export default function HomeScreen() {
                 contentContainerStyle={styles.rowContent}
                 snapToInterval={168 + 12}
                 decelerationRate="fast"
-                renderItem={({ item }) => <ContinueCard item={item} />}
+                renderItem={({ item }) => (
+                  <ContinueCard item={item} onLongPress={(i) => setContextItem(i)} />
+                )}
               />
             )}
           </Animated.View>
@@ -688,6 +697,11 @@ export default function HomeScreen() {
           </Animated.View>
         </Animated.View>
       )}
+
+      <CardContextSheet
+        item={contextItem}
+        onClose={() => setContextItem(null)}
+      />
 
       {/* ── Welcome overlay (fresh login only) ── */}
       <Animated.View
