@@ -399,6 +399,33 @@ export async function getEpisodes(
 
 // ── Item Detail (single item + similar) ──────────────────────────────────
 
+export async function getNextEpisode(
+  serverUrl: string,
+  token: string,
+  userId: string,
+  seriesId: string,
+  currentEpisodeId: string
+): Promise<JellyfinItem | null> {
+  const res = await jellyfinFetch<JellyfinItemsResponse>(
+    serverUrl,
+    `/Shows/${seriesId}/Episodes`,
+    {
+      token,
+      params: {
+        UserId: userId,
+        Fields: FIELDS,
+        EnableImageTypes: "Primary,Backdrop,Thumb",
+        AdjacentTo: currentEpisodeId,
+        Limit: 1,
+      },
+    }
+  );
+  const episodes = res.Items ?? [];
+  // AdjacentTo returns the current + next; pick the one that's not current
+  const next = episodes.find((e) => e.Id !== currentEpisodeId);
+  return next ?? null;
+}
+
 export async function getItem(
   serverUrl: string,
   token: string,

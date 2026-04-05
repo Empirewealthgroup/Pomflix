@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { View, Animated, StyleSheet } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { Colors, Radii, Spacing } from "@/constants/theme";
 
 interface SkeletonCardProps {
@@ -9,34 +10,47 @@ interface SkeletonCardProps {
 }
 
 function SkeletonBox({ width, height, borderRadius = Radii.md }: SkeletonCardProps) {
-  const opacity = useRef(new Animated.Value(0.4)).current;
+  const shimmer = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(opacity, {
-          toValue: 0.85,
-          duration: 800,
-          useNativeDriver: true,
-        }),
-        Animated.timing(opacity, {
-          toValue: 0.4,
-          duration: 800,
-          useNativeDriver: true,
-        }),
-      ])
+    const anim = Animated.loop(
+      Animated.timing(shimmer, {
+        toValue: 1,
+        duration: 1100,
+        useNativeDriver: true,
+      })
     );
-    pulse.start();
-    return () => pulse.stop();
+    anim.start();
+    return () => anim.stop();
   }, []);
 
+  const translateX = shimmer.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-width, width],
+  });
+
   return (
-    <Animated.View
-      style={[
-        styles.bone,
-        { width, height, borderRadius, opacity },
-      ]}
-    />
+    <View style={[styles.bone, { width, height, borderRadius }]}>
+      <Animated.View
+        style={[
+          StyleSheet.absoluteFill,
+          { transform: [{ translateX }] },
+        ]}
+      >
+        <LinearGradient
+          colors={[
+            "transparent",
+            "rgba(255,255,255,0.07)",
+            "rgba(255,255,255,0.13)",
+            "rgba(255,255,255,0.07)",
+            "transparent",
+          ]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={StyleSheet.absoluteFill}
+        />
+      </Animated.View>
+    </View>
   );
 }
 
@@ -77,6 +91,7 @@ export function SkeletonRow({ count = 4, size = "medium" }: { count?: number; si
 const styles = StyleSheet.create({
   bone: {
     backgroundColor: Colors.surfaceRaised,
+    overflow: "hidden",
   },
   wrapper: {
     gap: Spacing.xs,

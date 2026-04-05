@@ -7,6 +7,7 @@ import {
   FlatList,
   Animated,
   Dimensions,
+  RefreshControl,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Image } from "expo-image";
@@ -220,6 +221,7 @@ export default function HomeScreen() {
   const [continueItems, setContinueItems] = useState<JellyfinItem[]>([]);
   const [loadingContinue, setLoadingContinue] = useState(true);
   const [continueError, setContinueError] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [lastUsedModeId, setLastUsedModeId] = useState<string | null>(_lastUsedModeId);
   const [showOnboarding, setShowOnboarding] = useState(false);
 
@@ -420,6 +422,21 @@ export default function HomeScreen() {
     setLastUsedModeId(modeId);
   };
 
+  const handleRefresh = async () => {
+    if (!serverUrl || !token || !userId) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setRefreshing(true);
+    try {
+      const items = await getContinueWatching(serverUrl, token, userId, 8);
+      setContinueItems(items);
+      setContinueError(false);
+    } catch {
+      setContinueError(true);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safe}>
       {/* ─── Living background glow ─── */}
@@ -448,6 +465,14 @@ export default function HomeScreen() {
         style={styles.scroll}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor={Colors.brandLight}
+            colors={[Colors.brand]}
+          />
+        }
       >
         {/* ─── Header ─────────────────────────────────────────────────── */}
         <Animated.View
@@ -673,9 +698,11 @@ export default function HomeScreen() {
           { opacity: welcomeAnim },
         ]}
       >
-        <Animated.Text style={[styles.welcomeIcon, { transform: [{ scale: logoScale }] }]}>
-          ◈
-        </Animated.Text>
+        <Animated.Image
+          source={require("../../assets/icon.png")}
+          style={[styles.welcomeIcon, { transform: [{ scale: logoScale }] }]}
+          resizeMode="contain"
+        />
         <Text style={styles.welcomeGreeting}>{getGreeting().headline}</Text>
         {userName ? (
           <Text style={styles.welcomeName}>{getGreeting().subline(userName)}</Text>
@@ -931,10 +958,9 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   welcomeIcon: {
-    fontSize: 52,
-    color: "#8B1A2E",
+    width: 100,
+    height: 100,
     marginBottom: 12,
-    lineHeight: 60,
   },
 });
 

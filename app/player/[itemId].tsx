@@ -7,6 +7,7 @@ import {
   Dimensions,
   Animated,
   PanResponder,
+  Image,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
@@ -20,6 +21,7 @@ import {
   getPlaybackInfo,
   getStreamUrl,
   getItem,
+  getNextEpisode,
   reportPlaybackStart,
   reportPlaybackProgress,
   reportPlaybackStopped,
@@ -52,6 +54,15 @@ export default function PlayerScreen() {
   const [showMoodCheck, setShowMoodCheck] = useState(false);
   const [itemMeta, setItemMeta] = useState<JellyfinItem | null>(null);
   const [playedPct, setPlayedPct] = useState(0);
+  const [skipLabel, setSkipLabel] = useState<"Skip Intro" | "Skip Credits" | null>(null);
+
+  // Next episode
+  const [nextEpisode, setNextEpisode] = useState<JellyfinItem | null>(null);
+  const nextEpisodeRef = useRef<JellyfinItem | null>(null);
+  const [showNextEpisode, setShowNextEpisode] = useState(false);
+  const showNextEpisodeRef = useRef(false);
+  const [nextEpisodeCountdown, setNextEpisodeCountdown] = useState(10);
+  const nextEpisodeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Track picker
   const [audioTracks, setAudioTracks] = useState<AudioTrack[]>([]);
@@ -156,7 +167,14 @@ export default function PlayerScreen() {
           getPlaybackInfo(serverUrl, token, userId, itemId),
           getItem(serverUrl, token, userId, itemId).catch(() => null),
         ]);
-        if (meta) setItemMeta(meta);
+        if (meta) {
+          setItemMeta(meta);
+          if (meta.Type === "Episode" && meta.SeriesId) {
+            getNextEpisode(serverUrl, token, userId, meta.SeriesId, itemId!)
+              .then((ep) => { nextEpisodeRef.current = ep; setNextEpisode(ep); })
+              .catch(() => {});
+          }
+        }
         const source = info.MediaSources?.[0];
         if (!source) throw new Error("No media source found.");
         mediaSourceId.current = source.Id;
@@ -233,9 +251,43 @@ export default function PlayerScreen() {
       setPlayedPct(pct);
       updateSessionItem(itemId!, itemName || itemId!, pct);
       updateNowPlayingProgress(pct);
+      // Skip intro / credits detection
+      if (duration > 120) {
+        if (currentTime >= 60 && currentTime <= 210) {
+          setSkipLabel("Skip Intro");
+        } else if (duration - currentTime <= 300 && duration - currentTime > 5) {
+          setSkipLabel("Skip Credits");
+        } else {
+          setSkipLabel(null);
+        }
+      }
+      // Next episode countdown at 95%
+      if (pct >= 95 && nextEpisodeRef.current && !showNextEpisodeRef.current) {
+        showNextEpisodeRef.current = true;
+        setShowNextEpisode(true);
+        setNextEpisodeCountdown(10);
+        if (nextEpisodeTimerRef.current) clearInterval(nextEpisodeTimerRef.current);
+        nextEpisodeTimerRef.current = setInterval(() => {
+          setNextEpisodeCountdown((c) => {
+            if (c <= 1) {
+              clearInterval(nextEpisodeTimerRef.current!);
+              return 0;
+            }
+            return c - 1;
+          });
+        }, 1000);
+      }
     }, PROGRESS_INTERVAL_MS);
     return () => { if (progressTimer.current) clearInterval(progressTimer.current); };
   }, [streamUrl]);
+
+  // Auto-navigate to next episode when countdown hits 0
+  useEffect(() => {
+    if (nextEpisodeCountdown === 0 && nextEpisode && showNextEpisode) {
+      stopAndReport();
+      router.replace(`/player/${nextEpisode.Id}?name=${encodeURIComponent(nextEpisode.Name ?? "")}`);
+    }
+  }, [nextEpisodeCountdown]);
 
   // Lock to landscape on mount, restore portrait on unmount
   useEffect(() => {
@@ -275,6 +327,7 @@ export default function PlayerScreen() {
 
   const stopAndReport = () => {
     if (progressTimer.current) clearInterval(progressTimer.current);
+    if (nextEpisodeTimerRef.current) clearInterval(nextEpisodeTimerRef.current);
     if (serverUrl && token && itemId) {
       // player.currentTime can throw if the native object has already been
       // released (e.g. after the swipe-down animation completes). Fall back
@@ -483,6 +536,70 @@ export default function PlayerScreen() {
               >
                 <Text style={styles.optionsBtnText}>⋯</Text>
               </TouchableOpacity>
+
+              {/* Skip Intro / Skip Credits */}
+              {skipLabel && (
+                <TouchableOpacity
+                  style={styles.skipBtn}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    if (skipLabel === "Skip Intro") {
+                      try { player.currentTime = 210; } catch {}
+                    } else {
+                      try { player.currentTime = (player.duration ?? 0) - 2; } catch {}
+                    }
+                    setSkipLabel(null);
+                  }}
+                  activeOpacity={0.75}
+                >
+                  <Text style={styles.skipBtnText}>{skipLabel}  →</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Next Episode card */}
+              {showNextEpisode && nextEpisode && (
+                <View style={styles.nextEpCard}>
+                  {nextEpisode.ImageTags?.Primary && (
+                    <Image
+                      source={{ uri: `${serverUrl}/Items/${nextEpisode.Id}/Images/Primary?maxWidth=160&quality=80&api_key=${token}` }}
+                      style={styles.nextEpThumb}
+                      resizeMode="cover"
+                    />
+                  )}
+                  <View style={styles.nextEpInfo}>
+                    <Text style={styles.nextEpLabel}>Up Next</Text>
+                    <Text style={styles.nextEpTitle} numberOfLines={1}>{nextEpisode.Name}</Text>
+                    {!!nextEpisode.ParentIndexNumber && !!nextEpisode.IndexNumber && (
+                      <Text style={styles.nextEpSE}>
+                        S{nextEpisode.ParentIndexNumber} E{nextEpisode.IndexNumber}
+                      </Text>
+                    )}
+                  </View>
+                  <View style={styles.nextEpActions}>
+                    <TouchableOpacity
+                      style={styles.nextEpPlayBtn}
+                      onPress={() => {
+                        if (nextEpisodeTimerRef.current) clearInterval(nextEpisodeTimerRef.current);
+                        stopAndReport();
+                        router.replace(`/player/${nextEpisode.Id}?name=${encodeURIComponent(nextEpisode.Name ?? "")}`);
+                      }}
+                    >
+                      <Text style={styles.nextEpPlayText}>
+                        {nextEpisodeCountdown > 0 ? `Play (${nextEpisodeCountdown})` : "Play Now"}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (nextEpisodeTimerRef.current) clearInterval(nextEpisodeTimerRef.current);
+                        showNextEpisodeRef.current = false;
+                        setShowNextEpisode(false);
+                      }}
+                    >
+                      <Text style={styles.nextEpDismiss}>Not now</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
 
               {/* ── Now Playing info bar (bottom) ── */}
               <View style={styles.infoBar} pointerEvents="none">
@@ -881,6 +998,89 @@ const styles = StyleSheet.create({
     fontFamily: Typography.sansMedium,
     fontSize: 13,
     color: Colors.textPrimary,
+  },
+
+  // ── Skip Intro / Credits button ───────────────────────────────
+  skipBtn: {
+    position: "absolute",
+    bottom: 80,
+    right: 24,
+    backgroundColor: "rgba(0,0,0,0.65)",
+    borderRadius: 22,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderWidth: 0.8,
+    borderColor: "rgba(255,255,255,0.3)",
+  },
+  skipBtnText: {
+    fontFamily: Typography.sansSemiBold,
+    fontSize: 14,
+    color: "#fff",
+    letterSpacing: 0.2,
+  },
+
+  // ── Next episode card ─────────────────────────────────────────
+  nextEpCard: {
+    position: "absolute",
+    bottom: 100,
+    right: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(12,12,18,0.88)",
+    borderRadius: 14,
+    borderWidth: 0.8,
+    borderColor: "rgba(255,255,255,0.15)",
+    padding: 10,
+    gap: 10,
+    maxWidth: 360,
+  },
+  nextEpThumb: {
+    width: 80,
+    height: 54,
+    borderRadius: 8,
+    backgroundColor: "#111",
+  },
+  nextEpInfo: {
+    flex: 1,
+  },
+  nextEpLabel: {
+    fontFamily: Typography.sansMedium,
+    fontSize: 10,
+    color: Colors.brandLight,
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+    marginBottom: 2,
+  },
+  nextEpTitle: {
+    fontFamily: Typography.sansSemiBold,
+    fontSize: 13,
+    color: "#fff",
+  },
+  nextEpSE: {
+    fontFamily: Typography.sans,
+    fontSize: 11,
+    color: "rgba(255,255,255,0.55)",
+    marginTop: 2,
+  },
+  nextEpActions: {
+    alignItems: "center",
+    gap: 6,
+  },
+  nextEpPlayBtn: {
+    backgroundColor: Colors.brandLight,
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+  },
+  nextEpPlayText: {
+    fontFamily: Typography.sansSemiBold,
+    fontSize: 12,
+    color: "#000",
+  },
+  nextEpDismiss: {
+    fontFamily: Typography.sans,
+    fontSize: 11,
+    color: "rgba(255,255,255,0.5)",
   },
 
   // ── Options pill (top-right) ──────────────────────────────────

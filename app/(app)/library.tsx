@@ -6,6 +6,7 @@ import {
   FlatList,
   Keyboard,
   Modal,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -78,7 +79,7 @@ function useNavigate() {
 }
 
 // --- Featured strip card (16:9 cinematic) -------------------------------------
-function FeaturedCard({ item }: { item: JellyfinItem }) {
+function FeaturedCard({ item, scrollX, index }: { item: JellyfinItem; scrollX: Animated.Value; index: number }) {
   const { serverUrl } = useAuthStore();
   const navigate = useNavigate();
   const scale = useRef(new Animated.Value(1)).current;
@@ -90,6 +91,13 @@ function FeaturedCard({ item }: { item: JellyfinItem }) {
       : serverUrl && item.ImageTags?.Primary
       ? getPrimaryImageUrl(serverUrl, item.Id, item.ImageTags.Primary, Math.round(FEATURED_W * 2))
       : undefined;
+
+  const itemWidth = FEATURED_W + GRID_GAP;
+  const parallaxShift = scrollX.interpolate({
+    inputRange: [(index - 1) * itemWidth, index * itemWidth, (index + 1) * itemWidth],
+    outputRange: [-18, 0, 18],
+    extrapolate: "clamp",
+  });
 
   const onPressIn = () =>
     Animated.spring(scale, {
@@ -115,12 +123,16 @@ function FeaturedCard({ item }: { item: JellyfinItem }) {
     >
       <Animated.View style={[featuredStyles.card, { transform: [{ scale }] }]}>
         {imageUrl ? (
-          <Image
-            source={{ uri: imageUrl }}
-            style={StyleSheet.absoluteFill}
-            contentFit="cover"
-            transition={300}
-          />
+          <Animated.View
+            style={[StyleSheet.absoluteFill, { transform: [{ translateX: parallaxShift }] }]}
+          >
+            <Image
+              source={{ uri: imageUrl }}
+              style={[StyleSheet.absoluteFill, { width: FEATURED_W + 36, left: -18 }]}
+              contentFit="cover"
+              transition={300}
+            />
+          </Animated.View>
         ) : (
           <View
             style={[StyleSheet.absoluteFill, { backgroundColor: Colors.surfaceRaised }]}
@@ -131,6 +143,7 @@ function FeaturedCard({ item }: { item: JellyfinItem }) {
           style={featuredStyles.grad}
           pointerEvents="none"
         />
+        <BlurView intensity={18} tint="dark" style={featuredStyles.glassOverlay} pointerEvents="none" />
         <View style={featuredStyles.overlay}>
           <Text style={featuredStyles.title} numberOfLines={2}>
             {item.Name}
@@ -422,8 +435,10 @@ export default function LibraryScreen() {
   const [searchTotal, setSearchTotal] = useState(0);
   const [searchLoading, setSearchLoading] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const scrollY = useRef(new Animated.Value(0)).current;
+  const featuredScrollX = useRef(new Animated.Value(0)).current;
   const headerBg = scrollY.interpolate({
     inputRange: [0, 80],
     outputRange: ["rgba(10,10,12,0)", "rgba(10,10,12,0.96)"],
@@ -555,6 +570,21 @@ export default function LibraryScreen() {
     setSearchOpen(true);
   };
 
+  const handleRefresh = async () => {
+    if (!serverUrl || !token || !userId) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setRefreshing(true);
+    if (activeTab === "movies") {
+      moviesGenresLoaded.current = false;
+      setMoviesGenres(null);
+    } else if (activeTab === "shows") {
+      showsGenresLoaded.current = false;
+      setShowsGenres(null);
+    }
+    await loadTab(activeTab).catch(() => {});
+    setRefreshing(false);
+  };
+
   const closeSearch = () => {
     setSearchText("");
     setSearchResults([]);
@@ -597,7 +627,7 @@ export default function LibraryScreen() {
       <View>
         {featuredItems.length > 0 && (
           <View style={styles.featuredWrap}>
-            <FlatList
+            <Animated.FlatList
               data={featuredItems}
               keyExtractor={(i) => i.Id}
               horizontal
@@ -605,14 +635,21 @@ export default function LibraryScreen() {
               contentContainerStyle={styles.featuredRow}
               snapToInterval={FEATURED_W + GRID_GAP}
               decelerationRate="fast"
-              renderItem={({ item }) => <FeaturedCard item={item} />}
+              scrollEventThrottle={16}
+              onScroll={Animated.event(
+                [{ nativeEvent: { contentOffset: { x: featuredScrollX } } }],
+                { useNativeDriver: true }
+              )}
+              renderItem={({ item, index }) => (
+                <FeaturedCard item={item} scrollX={featuredScrollX} index={index} />
+              )}
             />
           </View>
         )}
         <Text style={styles.sectionLabel}>{sectionLabel}</Text>
       </View>
     );
-  }, [tabLoading, featuredItems, sectionLabel]);
+  }, [tabLoading, featuredItems, sectionLabel, featuredScrollX]);
 
   const TabBar = (
     <ScrollView
@@ -673,6 +710,14 @@ export default function LibraryScreen() {
               [{ nativeEvent: { contentOffset: { y: scrollY } } }],
               { useNativeDriver: false }
             )}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={handleRefresh}
+                tintColor={Colors.brandLight}
+                colors={[Colors.brand]}
+              />
+            }
           >
             {(activeTab === "movies" ? moviesGenresLoading : showsGenresLoading) ? (
               <View style={styles.genresLoadingWrap}>
@@ -712,6 +757,14 @@ export default function LibraryScreen() {
               [{ nativeEvent: { contentOffset: { y: scrollY } } }],
               { useNativeDriver: false }
             )}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={handleRefresh}
+                tintColor={Colors.brandLight}
+                colors={[Colors.brand]}
+              />
+            }
             ListHeaderComponent={ListHeader}
             renderItem={({ item }) => <PosterCard item={item} />}
           />
@@ -1006,6 +1059,14 @@ const featuredStyles = StyleSheet.create({
     left: 0,
     right: 0,
     height: FEATURED_H * 0.55,
+  },
+  glassOverlay: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: FEATURED_H * 0.48,
+    overflow: "hidden",
   },
   overlay: {
     position: "absolute",
