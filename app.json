@@ -13,7 +13,7 @@
       "backgroundColor": "#0A0A0C"
     },
     "ios": {
-      "buildNumber": "8",
+      "buildNumber": "10",
       "supportsTablet": true,
       "bundleIdentifier": "com.pomflix.app",
       "infoPlist": {
@@ -42,6 +42,13 @@
       },
       "router": {}
     },
-    "owner": "jsparxx201"
+    "owner": "jsparxx201",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/5c674527-36f7-498e-a7bf-41b1fb057fd5"
+    },
+    "android": {}
   }
 }

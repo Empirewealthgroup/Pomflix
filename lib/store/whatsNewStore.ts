@@ -26,6 +26,11 @@ export const WHATS_NEW_ITEMS = [
     title: "Better playback",
     body: "MKV and other formats that need conversion are automatically transcoded for smooth playback.",
   },
+  {
+    icon: "✨",
+    title: "New Look. Who Dis?",
+    body: "Fresh new app icon — same Pomflix you love, now with style.",
+  },
 ] as const;
 
 const KEY = "pom_whats_new_seen_v";
