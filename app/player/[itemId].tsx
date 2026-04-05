@@ -79,6 +79,8 @@ export default function PlayerScreen() {
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [heartFavorite, setHeartFavorite] = useState(false);
   const togglingHeartRef = useRef(false);
+  // For episodes the favorite target is the parent series, not the episode itself
+  const heartTargetId = useRef<string | null>(null);
   const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2];
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -90,19 +92,31 @@ export default function PlayerScreen() {
   const optionsSheetSlide = useRef(new Animated.Value(400)).current;
   const optionsSheetFade = useRef(new Animated.Value(0)).current;
 
-  // Sync heart state when itemMeta loads
+  // Sync heart state when itemMeta loads; for episodes, target + seed from parent series
   useEffect(() => {
-    setHeartFavorite(itemMeta?.UserData?.IsFavorite ?? false);
-  }, [itemMeta]);
+    if (!itemMeta) return;
+    if (itemMeta.Type === "Episode" && itemMeta.SeriesId) {
+      heartTargetId.current = itemMeta.SeriesId;
+      if (serverUrl && token && userId) {
+        getItem(serverUrl, token, userId, itemMeta.SeriesId)
+          .then((series) => setHeartFavorite(series.UserData?.IsFavorite ?? false))
+          .catch(() => {});
+      }
+    } else {
+      heartTargetId.current = itemId ?? null;
+      setHeartFavorite(itemMeta?.UserData?.IsFavorite ?? false);
+    }
+  }, [itemMeta?.Id]);
 
   const handleToggleHeart = async () => {
-    if (!serverUrl || !token || !userId || !itemId || togglingHeartRef.current) return;
+    const target = heartTargetId.current ?? itemId;
+    if (!serverUrl || !token || !userId || !target || togglingHeartRef.current) return;
     togglingHeartRef.current = true;
     const next = !heartFavorite;
     setHeartFavorite(next);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
-      await setFavorite(serverUrl, token, userId, itemId, next);
+      await setFavorite(serverUrl, token, userId, target, next);
     } catch {
       setHeartFavorite(!next);
     } finally {

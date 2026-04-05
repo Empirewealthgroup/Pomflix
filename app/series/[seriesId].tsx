@@ -25,6 +25,7 @@ import {
 import type { JellyfinItem } from "@/lib/jellyfin/types";
 import { Colors, Typography, Spacing, Radii } from "@/constants/theme";
 import EmptyState from "@/components/EmptyState";
+import CardContextSheet from "@/components/CardContextSheet";
 
 const { width } = Dimensions.get("window");
 const BACKDROP_H = Math.round(width * 0.52);
@@ -40,6 +41,7 @@ export default function SeriesScreen() {
   const [episodes, setEpisodes] = useState<JellyfinItem[]>([]);
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [loadingEpisodes, setLoadingEpisodes] = useState(false);
+  const [contextItem, setContextItem] = useState<JellyfinItem | null>(null);
 
   // Entrance animation
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -228,11 +230,20 @@ export default function SeriesScreen() {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                   router.push({ pathname: "/player/[itemId]", params: { itemId: ep.Id, itemName: ep.Name ?? "" } });
                 }}
+                onLongPress={(ep) => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  setContextItem(ep);
+                }}
               />
             ))
           )}
         </View>
       </Animated.ScrollView>
+
+      <CardContextSheet
+        item={contextItem}
+        onClose={() => setContextItem(null)}
+      />
     </View>
   );
 }
@@ -241,10 +252,12 @@ function EpisodeRow({
   episode,
   serverUrl,
   onPress,
+  onLongPress,
 }: {
   episode: JellyfinItem;
   serverUrl: string;
   onPress: () => void;
+  onLongPress?: (episode: JellyfinItem) => void;
 }) {
   const thumbUrl =
     episode.ImageTags?.Primary
@@ -261,7 +274,13 @@ function EpisodeRow({
   const watched = episode.UserData?.Played ?? false;
 
   return (
-    <TouchableOpacity style={styles.epRow} onPress={onPress} activeOpacity={0.8}>
+    <TouchableOpacity
+      style={styles.epRow}
+      onPress={onPress}
+      onLongPress={() => onLongPress?.(episode)}
+      delayLongPress={380}
+      activeOpacity={0.8}
+    >
       {/* Thumbnail */}
       <View style={styles.epThumb}>
         {thumbUrl ? (

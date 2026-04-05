@@ -111,6 +111,10 @@ export default function RootLayout() {
             gestureDirection: "vertical",
           }}
         />
+        <Stack.Screen
+          name="myvibe/index"
+          options={{ animation: "slide_from_right" }}
+        />
       </Stack>
     </ErrorBoundary>
   );

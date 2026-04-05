@@ -415,24 +415,22 @@ export default function HomeScreen() {
     return () => { clearTimeout(t); anim1.stop(); anim2?.stop(); };
   }, []);
 
-  useEffect(() => {
-    if (!serverUrl || !token || !userId) return;
-    setLoadingContinue(true);
-    setContinueError(false);
-    getContinueWatching(serverUrl, token, userId, 8)
-      .then(setContinueItems)
-      .catch(() => setContinueError(true))
-      .finally(() => setLoadingContinue(false));
-  }, [serverUrl, token, userId]);
-
-  useEffect(() => {
-    if (!serverUrl || !token || !userId) return;
-    setSavedLoading(true);
-    getFavorites(serverUrl, token, userId)
-      .then(setSavedItems)
-      .catch(() => setSavedItems([]))
-      .finally(() => setSavedLoading(false));
-  }, [serverUrl, token, userId]);
+  useFocusEffect(
+    useCallback(() => {
+      if (!serverUrl || !token || !userId) return;
+      setLoadingContinue(true);
+      setContinueError(false);
+      getContinueWatching(serverUrl, token, userId, 8)
+        .then(setContinueItems)
+        .catch(() => setContinueError(true))
+        .finally(() => setLoadingContinue(false));
+      setSavedLoading(true);
+      getFavorites(serverUrl, token, userId)
+        .then(setSavedItems)
+        .catch(() => setSavedItems([]))
+        .finally(() => setSavedLoading(false));
+    }, [serverUrl, token, userId])
+  );
 
   const { headline, subline } = getGreeting();
 
