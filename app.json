@@ -13,7 +13,7 @@
       "backgroundColor": "#0A0A0C"
     },
     "ios": {
-      "buildNumber": "10",
+      "buildNumber": "11",
       "supportsTablet": true,
       "bundleIdentifier": "com.pomflix.app",
       "infoPlist": {
