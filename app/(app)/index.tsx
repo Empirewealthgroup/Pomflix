@@ -19,10 +19,11 @@ import { useAuthStore } from "@/lib/store/authStore";
 import { useSessionStore } from "@/lib/store/sessionStore";
 import type { ActiveSession } from "@/lib/store/sessionStore";
 import { useOnboardingStore } from "@/lib/store/onboardingStore";
-import { getContinueWatching, getPrimaryImageUrl } from "@/lib/jellyfin/media";
+import { getContinueWatching, getPrimaryImageUrl, getFavorites } from "@/lib/jellyfin/media";
 import { MODES, getModeById, type ModeId } from "@/constants/modes";
 import { Colors, Typography, Spacing, Radii } from "@/constants/theme";
 import ModeCard from "@/components/ModeCard";
+import MyVibeCard from "@/components/MyVibeCard";
 import { SkeletonRow } from "@/components/SkeletonCard";
 import { useSettingsStore } from "@/lib/store/settingsStore";
 import { useWhatsNewStore, WHATS_NEW_ITEMS } from "@/lib/store/whatsNewStore";
@@ -229,6 +230,8 @@ export default function HomeScreen() {
   const [continueError, setContinueError] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [contextItem, setContextItem] = useState<JellyfinItem | null>(null);
+  const [savedItems, setSavedItems] = useState<JellyfinItem[]>([]);
+  const [savedLoading, setSavedLoading] = useState(true);
   const [lastUsedModeId, setLastUsedModeId] = useState<string | null>(_lastUsedModeId);
   const [showOnboarding, setShowOnboarding] = useState(false);
 
@@ -422,6 +425,15 @@ export default function HomeScreen() {
       .finally(() => setLoadingContinue(false));
   }, [serverUrl, token, userId]);
 
+  useEffect(() => {
+    if (!serverUrl || !token || !userId) return;
+    setSavedLoading(true);
+    getFavorites(serverUrl, token, userId)
+      .then(setSavedItems)
+      .catch(() => setSavedItems([]))
+      .finally(() => setSavedLoading(false));
+  }, [serverUrl, token, userId]);
+
   const { headline, subline } = getGreeting();
 
   const handleQuickPlay = (modeId: string) => {
@@ -434,14 +446,32 @@ export default function HomeScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setRefreshing(true);
     try {
-      const items = await getContinueWatching(serverUrl, token, userId, 8);
+      const [items, faves] = await Promise.all([
+        getContinueWatching(serverUrl, token, userId, 8),
+        getFavorites(serverUrl, token, userId),
+      ]);
       setContinueItems(items);
+      setSavedItems(faves);
       setContinueError(false);
     } catch {
       setContinueError(true);
     } finally {
       setRefreshing(false);
     }
+  };
+
+  const handleShufflePlay = (item: JellyfinItem) => {
+    const navigate = () => {
+      if (item.Type === "Series") {
+        router.push({ pathname: "/series/[seriesId]", params: { seriesId: item.Id } });
+      } else {
+        router.push({
+          pathname: "/player/[itemId]",
+          params: { itemId: item.Id, itemName: item.Name ?? "" },
+        });
+      }
+    };
+    handleModeTransition("#8B1A2E", navigate);
   };
 
   return (
@@ -537,18 +567,16 @@ export default function HomeScreen() {
             />
           )}
           <View style={styles.moodGrid}>
-            {/* Hero mood — full width */}
-            <ModeCard
-              mode={heroMood}
-              isRecommended
-              size="hero"
+            {/* My Vibe card — replaces hero mood slot */}
+            <MyVibeCard
+              savedItems={savedItems}
+              loading={savedLoading}
+              onShufflePlay={handleShufflePlay}
               enterDelay={200}
-              onQuickPlay={handleQuickPlay}
-              onTransition={handleModeTransition}
             />
-            {/* Support moods — swipeable horizontal row */}
+            {/* All mood cards — swipeable horizontal row */}
             <FlatList
-              data={visibleModes.filter((m) => m.id !== heroMood.id)}
+              data={visibleModes}
               keyExtractor={(m) => m.id}
               horizontal
               showsHorizontalScrollIndicator={false}
