@@ -223,9 +223,18 @@ export default function PlayerScreen() {
         playSessionId.current = info.PlaySessionId ?? "";
         // Use TranscodingUrl when Jellyfin says the format needs transcoding,
         // otherwise fall back to the static direct-stream URL.
+        console.log("[Player] source:", JSON.stringify({
+          Container: source.Container,
+          SupportsDirectPlay: source.SupportsDirectPlay,
+          SupportsDirectStream: source.SupportsDirectStream,
+          SupportsTranscoding: source.SupportsTranscoding,
+          DirectStreamUrl: source.DirectStreamUrl ?? null,
+          TranscodingUrl: source.TranscodingUrl ?? null,
+        }));
         const url = source.TranscodingUrl
           ? `${serverUrl}${source.TranscodingUrl}`
           : getStreamUrl(serverUrl, itemId, token, source.Id);
+        console.log("[Player] resolved URL:", url);
         setStreamUrl(url);
         reportPlaybackStart(serverUrl, token, itemId, source.Id, playSessionIdRef.current);
       } catch (err: unknown) {
@@ -341,8 +350,17 @@ export default function PlayerScreen() {
   // Subscribe to audio/subtitle track events
   useEffect(() => {
     const subs = [
+      player.addListener("statusChange", ({ status, error: playError }) => {
+        console.log("[Player] status:", status, playError ? `error: ${playError.message}` : "");
+        if (status === "error" && playError) {
+          setError(`Playback error: ${playError.message}`);
+        }
+      }),
       // Seed initial values when source loads (player props are readable synchronously)
       player.addListener("sourceLoad", () => {
+        // Start playback — the setup callback captures a stale null closure for
+        // streamUrl, so play() in the callback never fires for async-loaded URLs.
+        player.play();
         setAudioTracks(player.availableAudioTracks ?? []);
         setSubtitleTracks(player.availableSubtitleTracks ?? []);
         setCurrentAudioTrack(player.audioTrack ?? null);

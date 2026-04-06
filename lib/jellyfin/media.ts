@@ -227,7 +227,12 @@ export async function getLibraryItems(
 // ── Playback ──────────────────────────────────────────────────────────────
 
 // iOS-native formats: MP4/MOV/M4V with H.264 or HEVC, AAC audio
-// Anything outside this gets a TranscodingUrl back from Jellyfin
+// Anything outside this (e.g. .avi, .mkv, unsupported codec) gets transcoded.
+// Transcoding uses HLS (m3u8 + ts segments) — NOT progressive mp4.
+// Progressive mp4 transcode causes CoreMedia -12939 on iOS because AVFoundation
+// sends byte-range requests but a live transcode can't serve them (returns 200
+// instead of 206 Partial Content). HLS avoids this entirely: it serves small
+// pre-chunked .ts segments with no range requests needed.
 const IOS_DEVICE_PROFILE = {
   DirectPlayProfiles: [
     {
@@ -240,10 +245,16 @@ const IOS_DEVICE_PROFILE = {
   TranscodingProfiles: [
     {
       Type: "Video",
-      Container: "mp4",
+      Container: "ts",
+      // H.264 only for transcoding. HEVC passthrough caused FFmpeg failures:
+      // - 8-bit HEVC in TS works on iOS but the server has no HEVC encoder
+      //   to satisfy bit-depth constraints, so Jellyfin returns segment errors.
+      // - 10-bit HEVC (main10) in TS is unsupported by AVFoundation entirely.
+      // Native HEVC in .mp4/.mov is handled by DirectPlayProfiles above.
+      // All other containers (mkv, avi, etc.) transcode to H.264 HLS.
       VideoCodec: "h264",
       AudioCodec: "aac",
-      Protocol: "http",
+      Protocol: "hls",
       Context: "Streaming",
       MaxAudioChannels: "2",
     },
@@ -267,6 +278,19 @@ export async function getPlaybackInfo(
       body: {
         UserId: userId,
         DeviceProfile: IOS_DEVICE_PROFILE,
+        // Disable direct stream (remux) so Jellyfin always transcodes non-native
+        // containers (mkv, avi, etc.) to HLS rather than returning a DirectStreamUrl
+        // that resolves to a raw container iOS cannot parse.
+        EnableDirectPlay: true,
+        EnableDirectStream: false,
+        EnableTranscoding: true,
+        // Set a very high bitrate ceiling so Jellyfin never triggers
+        // ContainerBitrateExceedsLimit for HEVC content. Without this, Jellyfin
+        // tries to re-encode HEVC→HEVC at a lower bitrate; if the server lacks
+        // hardware HEVC encoding it fails and returns 5xx for every .ts segment
+        // ("resource unavailable"). With this ceiling, HEVC is remuxed (passthrough)
+        // into HLS .ts segments directly — no re-encode, starts in ~1s.
+        MaxStreamingBitrate: 80000000,
       },
     }
   );
